@@ -1,0 +1,25 @@
+# sensors/bh1750.yaml
+# BH1750 I2C ambient light sensor
+#
+# Required substitutions:
+#   ${bh1750_address}         — I2C address: "0x23" (ADDR low) or "0x5C" (ADDR high)
+#   ${sensor_update_interval} — how often to read (e.g. 30s)
+#
+# Shares I2C bus with BME280 (defined in bme280.yaml)
+#
+# Wiring:
+#   SDA  → same as BME280
+#   SCL  → same as BME280
+#   VCC  → 3.3V
+#   GND  → GND
+#   ADDR → GND (for 0x23) or VCC (for 0x5C)
+
+sensor:
+  - platform: bh1750
+    name: "Light Level"
+    id: light_level
+    address: ${bh1750_address}
+    update_interval: ${sensor_update_interval}
+    on_value:
+      then:
+        - lambda: 'id(sensor_values)["lightLevel"] = x;'

@@ -1,0 +1,123 @@
+# common/base.yaml
+# Shared base configuration for all PlantHub devices
+# Included via packages in device-specific YAML files
+
+esphome:
+  name: ${device_id}
+  friendly_name: ${device_name}
+  name_add_mac_suffix: true
+  project:
+    name: "planthub.sensor-node"
+    version: "${firmware_version}"
+  includes:
+    - ../common/json_helper.h
+    - ../common/nvs_helper.h
+    - ../common/planthub_mqtt/planthub_mqtt.h
+    - ../common/planthub_mqtt/planthub_mqtt.cpp
+    - ../common/provisioning_page.h
+    - ../common/provisioning_handler.h
+  platformio_options:
+    extra_scripts:
+      - pre:../../../../common/build_captive_portal.py
+  # All on_boot entries consolidated here to avoid ESPHome package merge
+  # conflicts. When multiple packages define esphome: on_boot:, only the
+  # last package's entries survive. Keeping them all here guarantees they
+  # all execute.
+  on_boot:
+    # Priority 100: Initialize NVS and check for saved provisioning config
+    - priority: 100
+      then:
+        - lambda: |-
+            if (!planthub::nvs_init()) {
+              ESP_LOGE("provisioning", "Failed to initialize NVS!");
+            }
+        - script.execute: check_nvs_config
+    # Priority -50: Start LED status loop
+    - priority: -50
+      then:
+        - script.execute: led_loop
+    # Priority -100: Post-boot — wait for MQTT if provisioned, then publish capabilities
+    - priority: -100
+      then:
+        - lambda: |-
+            if (id(provisioning_complete)) {
+              ESP_LOGI("boot", "Device provisioned, waiting for MQTT...");
+            } else {
+              ESP_LOGI("boot", "Device not provisioned, waiting for WiFi...");
+            }
+        - wait_until:
+            condition:
+              lambda: 'return id(provisioning_complete) ? planthub::planthub_mqtt.is_connected() : true;'
+        - delay: 3s
+        - lambda: |-
+            if (id(provisioning_complete)) {
+              id(publish_capabilities).execute();
+              ESP_LOGI("boot", "Boot complete - capabilities published");
+            }
+    # Priority -200: Register web server provisioning handler (needs web server ready)
+    - priority: -200
+      then:
+        - lambda: |-
+            if (web_server_base::global_web_server_base == nullptr) {
+              ESP_LOGE("provisioning", "Web server base not available; provisioning handler not registered");
+              return;
+            }
+
+            static bool handler_registered = false;
+            static planthub::ProvisioningHandler prov_handler(
+              &id(provisioning_state),
+              &id(device_claim_code),
+              &id(device_node_id),
+              "${device_name}"
+            );
+
+            if (!handler_registered) {
+              prov_handler.set_state_callback([](const std::string &s) {
+                id(provisioning_status_sensor).publish_state(s);
+              });
+              web_server_base::global_web_server_base->add_handler(&prov_handler);
+              handler_registered = true;
+              ESP_LOGI("provisioning", "Registered provisioning handler");
+            }
+
+# Logging
+logger:
+  level: DEBUG
+  logs:
+    mqtt: INFO
+    sensor: DEBUG
+    component: WARN
+    light: NONE
+
+# OTA updates
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# Web server for local monitoring & control (no auth for easier setup)
+# js_include injects setup overlay JS that shows claim code during provisioning
+# Requires ESPHome 2024.2+ for js_include support
+web_server:
+  id: web_server_main
+  port: 80
+  version: 2
+  css_include: "../common/theme.css"
+  js_include: "../common/setup.js"
+
+# Time sync — required for TLS certificate validation
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "UTC"
+    servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+    on_time_sync:
+      then:
+        - logger.log: "Time synchronized via NTP"
+
+# Restart button (accessible via web UI and Home Assistant)
+button:
+  - platform: restart
+    name: "Restart"
+    id: restart_button

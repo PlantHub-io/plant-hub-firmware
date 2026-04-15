@@ -1,0 +1,74 @@
+# common/wifi.yaml
+# WiFi configuration with fallback AP and captive portal
+# AP stays active until device is fully provisioned (claimed + MQTT connected)
+
+wifi:
+  # mDNS support — hostname is set dynamically to planthub-{nodeId}.local
+  # after provisioning via mdns_hostname_set() in provisioning.yaml
+  domain: .local
+
+  # No default WiFi configured - device starts in AP mode immediately
+  # User connects to AP and configures WiFi via captive portal
+  # After WiFi is configured via portal, it connects to that network
+  output_power: 20dB
+
+  # Prevent reboots when WiFi drops — needed during provisioning
+  reboot_timeout: 0s
+
+  # Enable AP mode immediately — no password for easy first-time setup
+  ap:
+    # Do not set a static channel, let ESPHome pick one to avoid conflicts
+    # channel: 1
+    # Keep AP running indefinitely — user needs to see claim code
+    ap_timeout: 0s
+
+  # When WiFi STA connects, trigger self-registration if not provisioned
+  on_connect:
+    then:
+      - lambda: |-
+          ESP_LOGI("wifi-dbg", "on_connect fired: provisioning_complete=%s, provisioning_state=%s",
+                   id(provisioning_complete) ? "true" : "false",
+                   id(provisioning_state).c_str());
+      - if:
+          condition:
+            lambda: 'return !id(provisioning_complete) && id(provisioning_state) != "WAITING_CLAIM";'
+          then:
+            - logger.log: "WiFi connected, re-enabling AP + captive portal for provisioning..."
+            - lambda: |-
+                // Set state to REGISTERING immediately so when the captive portal
+                // HTML loads, /provision-status returns the right state and the
+                // page shows "Registering..." instead of the WiFi selector.
+                id(provisioning_state) = "REGISTERING";
+                id(provisioning_status_sensor).publish_state("REGISTERING");
+                ESP_LOGI("wifi-dbg", "State set to REGISTERING, re-enabling AP...");
+
+                // Re-enable AP — WiFi component disabled it when STA connected
+                struct wifi_ap_hack : public wifi::WiFiComponent {
+                  void enable_ap() {
+                    this->ap_setup_ = false;
+                    this->setup_ap_config_();
+                  }
+                };
+                ((wifi_ap_hack*)wifi::global_wifi_component)->enable_ap();
+
+                // Re-enable captive portal — WiFi component called end() when STA
+                // connected (wifi_component.cpp:1489). We restart it so Android
+                // keeps detecting a captive portal and stays connected to the AP.
+                // This is safe: on_connect fires from loop() AFTER the WiFi
+                // component's state transitions are complete (CONNECTED state),
+                // so it won't call end() again.
+                #ifdef USE_CAPTIVE_PORTAL
+                if (captive_portal::global_captive_portal != nullptr) {
+                  captive_portal::global_captive_portal->start();
+                  ESP_LOGI("wifi-dbg", "Captive portal restarted (active_=%d)",
+                           captive_portal::global_captive_portal->is_active());
+                }
+                #endif
+            - delay: 2s
+            - script.execute: self_register
+
+# Captive portal for WiFi setup
+captive_portal:
+
+# Improv for serial provisioning (removed to prevent AP conflicts)
+# improv_serial:

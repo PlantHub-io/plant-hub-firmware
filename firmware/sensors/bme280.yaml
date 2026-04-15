@@ -1,0 +1,49 @@
+# sensors/bme280.yaml
+# BME280 I2C sensor — temperature, humidity, pressure
+#
+# Required substitutions:
+#   ${i2c_sda_pin}            — I2C SDA GPIO (e.g. GPIO6)
+#   ${i2c_scl_pin}            — I2C SCL GPIO (e.g. GPIO7)
+#   ${bme280_address}         — I2C address: "0x76" (default) or "0x77"
+#   ${sensor_update_interval} — how often to read (e.g. 30s)
+#
+# Wiring:
+#   SDA → ${i2c_sda_pin}
+#   SCL → ${i2c_scl_pin}
+#   VCC → 3.3V
+#   GND → GND
+
+i2c:
+  sda: ${i2c_sda_pin}
+  scl: ${i2c_scl_pin}
+  scan: true
+  frequency: 100kHz
+
+sensor:
+  - platform: bme280_i2c
+    address: ${bme280_address}
+    update_interval: ${sensor_update_interval}
+
+    temperature:
+      name: "Temperature"
+      id: temperature
+      oversampling: 2x
+      on_value:
+        then:
+          - lambda: 'id(sensor_values)["temperature"] = x;'
+
+    humidity:
+      name: "Humidity"
+      id: humidity
+      oversampling: 2x
+      on_value:
+        then:
+          - lambda: 'id(sensor_values)["humidity"] = x;'
+
+    pressure:
+      name: "Pressure"
+      id: pressure
+      oversampling: 2x
+      on_value:
+        then:
+          - lambda: 'id(sensor_values)["pressure"] = x;'

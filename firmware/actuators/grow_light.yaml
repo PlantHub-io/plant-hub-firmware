@@ -1,0 +1,72 @@
+# actuators/grow_light.yaml
+# Grow light relay control with safety auto-shutoff
+#
+# Required substitutions:
+#   ${light_pin}            — GPIO pin for relay (e.g. GPIO3)
+#   ${light_max_duration}   — Max ON time in seconds (e.g. 3600)
+#
+# Wiring:
+#   ${light_pin} → Relay IN
+#   5V           → Relay VCC
+#   GND          → Relay GND
+
+switch:
+  - platform: gpio
+    pin:
+      number: ${light_pin}
+      mode: OUTPUT
+    name: "Grow Light"
+    id: grow_light
+    icon: "mdi:lightbulb"
+    restore_mode: ALWAYS_OFF
+
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(actuator_states)["growLight"] = "ON";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"growLight\",\"state\":\"ON\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Grow light ON"
+        # Safety auto-shutoff after max duration
+        - delay: ${light_max_duration}s
+        - if:
+            condition:
+              switch.is_on: grow_light
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "Grow light safety auto-shutoff triggered after %s seconds"
+                  args: ['"${light_max_duration}"']
+              - switch.turn_off: grow_light
+
+    on_turn_off:
+      then:
+        - lambda: |-
+            id(actuator_states)["growLight"] = "OFF";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"growLight\",\"state\":\"OFF\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Grow light OFF"
+
+# Timed grow light operation script
+script:
+  - id: light_timed
+    mode: restart
+    parameters:
+      seconds: int
+    then:
+      - logger.log:
+          format: "Grow light timed: %d seconds"
+          args: ['seconds']
+          level: INFO
+      - switch.turn_on: grow_light
+      - delay: !lambda 'return seconds * 1000;'
+      - switch.turn_off: grow_light
+      - logger.log: "Grow light timed operation complete"

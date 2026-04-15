@@ -1,0 +1,84 @@
+# sensors/_template.yaml
+#
+# Template for adding a new sensor to a PlantHub device.
+#
+# This file is NOT meant to be included directly. Copy it to a new file
+# (e.g. sensors/dht22.yaml), fill in the ESPHome sensor block for your
+# hardware, and include it from your device YAML.
+#
+# --------------------------------------------------------------------
+# STEP 1. Find the ESPHome platform for your sensor
+# --------------------------------------------------------------------
+# Browse https://esphome.io/components/sensor/ — most common sensors
+# (DHT22, DS18B20, SHT3x, SCD4x, TSL2591, ultrasonic distance, pH/EC
+# probes for hydroponics, etc.) have a first-class component already.
+#
+# --------------------------------------------------------------------
+# STEP 2. Declare substitutions in your device YAML
+# --------------------------------------------------------------------
+# Any `${...}` placeholder you reference below must exist in the
+# `substitutions:` block of your device YAML, e.g.:
+#
+#   substitutions:
+#     dht22_pin: GPIO5
+#     sensor_update_interval: "30s"
+#
+# --------------------------------------------------------------------
+# STEP 3. Write readings into the sensor_values map
+# --------------------------------------------------------------------
+# The common/status.yaml package periodically publishes the contents of
+# the `sensor_values` global map to MQTT. Anything you insert under a
+# given key shows up on the dashboard under that key — no extra glue.
+#
+# The backend auto-registers unknown keys the first time they arrive,
+# but for polished display names / units / ranges, also add an entry to
+# `capabilities_sensors` in your device YAML (see STEP 4).
+#
+# --------------------------------------------------------------------
+# STEP 4. Advertise the sensor in your device's capabilities
+# --------------------------------------------------------------------
+# In your device YAML, extend `capabilities_sensors` with a JSON line:
+#
+#   msg += "{\"sensorKey\":\"airTemp\",\"sensorType\":\"dht22\",\"unit\":\"°C\",\"displayName\":\"Air Temperature\",\"minValue\":-40,\"maxValue\":80,\"precision\":0.1},";
+#
+# Keep trailing commas between entries; the last entry must have no comma.
+# See examples in devices/example-c3zero.yaml.
+#
+# --------------------------------------------------------------------
+# STEP 5. Include the new package
+# --------------------------------------------------------------------
+# In your device YAML, add under `packages:`:
+#
+#   my_sensor: !include ../sensors/dht22.yaml
+#
+# --------------------------------------------------------------------
+# EXAMPLE — replace with your sensor's ESPHome platform
+# --------------------------------------------------------------------
+
+# If your sensor uses I2C and you don't already have an I2C bus declared
+# (e.g. via bme280.yaml or bh1750.yaml), uncomment and adjust:
+#
+# i2c:
+#   sda: ${i2c_sda_pin}
+#   scl: ${i2c_scl_pin}
+#   scan: true
+#   frequency: 100kHz
+
+sensor:
+  - platform: template          # <-- replace with your real platform, e.g. `dht`, `sht3xd`, `scd4x`, `ds18b20`
+    name: "My Sensor"
+    id: my_sensor
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: ${sensor_update_interval}
+    lambda: |-
+      // Replace with your sensor's actual read. For most first-class ESPHome
+      // platforms, you won't need a lambda at all — use `on_value:` below.
+      return NAN;
+    on_value:
+      then:
+        - lambda: |-
+            // Write the reading into the shared map under a camelCase key.
+            // The key is what shows up on the dashboard. Be consistent across
+            // devices so history charts stack correctly.
+            id(sensor_values)["mySensor"] = x;

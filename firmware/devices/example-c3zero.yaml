@@ -1,0 +1,168 @@
+# devices/example-c3zero.yaml
+#
+# PlantHub reference device — ESP32-C3 Zero
+#
+# This file is a WORKING reference configuration. If your hardware matches
+# the wiring diagram below, you can flash it as-is.
+#
+# If your pins, sensors, or actuators differ: copy this file to
+# `my-device.yaml` and edit the substitutions. See ../../docs/CUSTOMIZATION.md.
+#
+# ============================================
+# WIRING DIAGRAM (ESP32-C3 Zero)
+# ============================================
+#
+#   ESP32-C3 Zero     Component
+#   -------------     ---------
+#   GPIO0          →  Soil Moisture Sensor AOUT
+#   GPIO6 (SDA)    →  BME280 SDA + BH1750 SDA
+#   GPIO7 (SCL)    →  BME280 SCL + BH1750 SCL
+#   GPIO3          →  Water Pump Relay IN
+#   GPIO4          →  Ventilation Fan Relay IN
+#   GPIO8          →  Status LED
+#   GPIO9          →  Factory Reset Button (momentary, to GND)
+#   3.3V           →  Sensor VCC (soil, BME280, BH1750)
+#   5V             →  Relay module VCC
+#   GND            →  Common GND
+#
+# ============================================
+# FLASH & ONBOARD
+# ============================================
+#
+#   esphome run firmware/devices/example-c3zero.yaml
+#
+# Then follow the provisioning flow in the top-level README.md.
+#
+
+substitutions:
+  # --- Device identity ----------------------------------------------------
+  # EDIT: pick a unique id per physical device (e.g. planthub-c3-002).
+  # The id becomes the ESPHome hostname and a MAC suffix is appended at boot,
+  # so collisions across the network are unlikely.
+  device_id: "planthub-c3-001"
+  device_name: "PlantHub C3 Node"
+  hardware_version: "esp32c3-zero-v1"
+  firmware_version: "1.1.0"
+
+  # Backend URL + device-provisioning API key (from secrets.yaml)
+  backend_url: !secret backend_url
+  device_provisioning_key: !secret device_provisioning_key
+
+  # --- Pin mappings -------------------------------------------------------
+  # Match these to your actual wiring. If your board isn't an ESP32-C3 Zero,
+  # start from example-s3zero.yaml or my-device.yaml.example instead.
+  soil_moisture_pin: GPIO0
+  i2c_sda_pin: GPIO6
+  i2c_scl_pin: GPIO7
+  pump_pin: GPIO3
+  fan_pin: GPIO4
+  status_led_pin: GPIO8
+  factory_reset_pin: GPIO9
+
+  # --- I2C addresses ------------------------------------------------------
+  # Defaults for BME280 (0x76) and BH1750 (0x23). Some BME280 breakouts use
+  # 0x77 — check your sensor's documentation.
+  bme280_address: "0x76"
+  bh1750_address: "0x23"
+
+  # --- Soil moisture calibration -----------------------------------------
+  # Measure these with YOUR sensor:
+  #   soil_dry_value: ADC voltage when the probe is in dry air
+  #   soil_wet_value: ADC voltage when the probe is submerged in water
+  # See ../../docs/CUSTOMIZATION.md for the calibration procedure.
+  soil_dry_value: "2.8"
+  soil_wet_value: "1.2"
+
+  # --- Timing -------------------------------------------------------------
+  sensor_update_interval: "30s"
+  telemetry_interval: "60s"
+  pump_max_duration: "120"   # seconds — safety auto-off for the pump
+
+  # --- Capabilities advertised to the backend ----------------------------
+  # When the device boots, it publishes this JSON to {tenant}/{node}/capabilities.
+  # The backend uses it to auto-register sensors/actuators on your dashboard.
+  #
+  # If you add or remove a sensor/actuator package below, update these blocks
+  # to match. The JSON shape is documented in ../../docs/PROVISIONING.md.
+  capabilities_sensors: |-
+    msg += "{\"sensorKey\":\"soilMoisture\",\"sensorType\":\"capacitive_adc\",\"unit\":\"%\",\"displayName\":\"Soil Moisture\",\"minValue\":0,\"maxValue\":100,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"temperature\",\"sensorType\":\"bme280\",\"unit\":\"°C\",\"displayName\":\"Temperature\",\"minValue\":-40,\"maxValue\":85,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"humidity\",\"sensorType\":\"bme280\",\"unit\":\"%\",\"displayName\":\"Humidity\",\"minValue\":0,\"maxValue\":100,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"pressure\",\"sensorType\":\"bme280\",\"unit\":\"hPa\",\"displayName\":\"Pressure\",\"minValue\":300,\"maxValue\":1100,\"precision\":0.01},";
+    msg += "{\"sensorKey\":\"lightLevel\",\"sensorType\":\"bh1750\",\"unit\":\"lx\",\"displayName\":\"Light Level\",\"minValue\":0,\"maxValue\":65535,\"precision\":1}";
+
+  capabilities_actuators: |-
+    msg += "{\"actuatorKey\":\"waterPump\",\"actuatorType\":\"relay\",\"displayName\":\"Water Pump\",\"supportedCommands\":[\"ON\",\"OFF\"],\"controlType\":\"BINARY\",\"durationSupported\":true,\"maxDurationSeconds\":${pump_max_duration}},";
+    msg += "{\"actuatorKey\":\"ventFan\",\"actuatorType\":\"relay\",\"displayName\":\"Ventilation Fan\",\"supportedCommands\":[\"ON\",\"OFF\"],\"controlType\":\"BINARY\",\"durationSupported\":false}";
+
+  # --- Command router -----------------------------------------------------
+  # The backend sends actuator commands on {tenant}/{node}/actuators. The
+  # handle_command script (common/status.yaml) parses each command and
+  # invokes this router. Add a branch per actuator you expose above.
+  command_router: |-
+    if (actuator == "waterPump") {
+      if (durationSeconds > 0) {
+        int clamped = durationSeconds > ${pump_max_duration} ? ${pump_max_duration} : durationSeconds;
+        ESP_LOGI("command", "[waterPump] TIMED ON for %d seconds (requested=%d, max=${pump_max_duration})", clamped, durationSeconds);
+        id(pump_timed).execute(clamped);
+      } else if (action == "ON") {
+        ESP_LOGI("command", "[waterPump] ON (no duration, auto-off in ${pump_max_duration}s)");
+        id(water_pump).turn_on();
+      } else if (action == "OFF") {
+        ESP_LOGI("command", "[waterPump] OFF");
+        id(water_pump).turn_off();
+      } else {
+        ESP_LOGW("command", "[waterPump] Unknown action: %s", action.c_str());
+      }
+    } else if (actuator == "ventFan") {
+      if (action == "ON") {
+        ESP_LOGI("command", "[ventFan] ON");
+        id(vent_fan).turn_on();
+      } else if (action == "OFF") {
+        ESP_LOGI("command", "[ventFan] OFF");
+        id(vent_fan).turn_off();
+      } else {
+        ESP_LOGW("command", "[ventFan] Unknown action: %s", action.c_str());
+      }
+    } else {
+      ESP_LOGW("command", "Unknown actuator: %s (action=%s)", actuator.c_str(), action.c_str());
+    }
+
+# --- Board config ---------------------------------------------------------
+esp32:
+  board: esp32-c3-devkitm-1
+  partitions: ../partitions.csv
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_ESP_MQTT_ENABLED: "y"
+      CONFIG_MQTT_TRANSPORT_SSL: "y"
+      CONFIG_MQTT_TRANSPORT_WEBSOCKET: "n"
+      CONFIG_MQTT_TRANSPORT_WEBSOCKET_SECURE: "n"
+    advanced:
+      include_builtin_idf_components:
+        - nvs_flash
+        - mqtt
+
+# --- Packages -------------------------------------------------------------
+# ESPHome merges these into one config at compile time. The `common` packages
+# provide the provisioning flow, MQTT client, and telemetry — do not modify.
+# Sensor and actuator packages are interchangeable; pick the set that matches
+# your hardware.
+packages:
+  base:         !include ../common/base.yaml
+  wifi:         !include ../common/wifi.yaml
+  provisioning: !include ../common/provisioning.yaml
+  globals:      !include ../common/globals.yaml
+  status:       !include ../common/status.yaml
+  led:          !include ../common/led_status.yaml
+
+  # Physical sensors — wired per the diagram above
+  soil:   !include ../sensors/soil_moisture_adc.yaml
+  bme280: !include ../sensors/bme280.yaml
+  bh1750: !include ../sensors/bh1750.yaml
+
+  # Actuators
+  pump: !include ../actuators/water_pump.yaml
+  fan:  !include ../actuators/vent_fan.yaml

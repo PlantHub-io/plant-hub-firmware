@@ -1,0 +1,44 @@
+# actuators/vent_fan.yaml
+# Ventilation fan relay control
+#
+# Required substitutions:
+#   ${fan_pin} — GPIO pin for relay (e.g. GPIO4)
+#
+# Wiring:
+#   ${fan_pin} → Relay IN
+#   5V         → Relay VCC
+#   GND        → Relay GND
+
+switch:
+  - platform: gpio
+    pin:
+      number: ${fan_pin}
+      mode: OUTPUT
+    name: "Ventilation Fan"
+    id: vent_fan
+    icon: "mdi:fan"
+    restore_mode: ALWAYS_OFF
+
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(actuator_states)["ventFan"] = "ON";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"ventFan\",\"state\":\"ON\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Ventilation fan ON"
+
+    on_turn_off:
+      then:
+        - lambda: |-
+            id(actuator_states)["ventFan"] = "OFF";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"ventFan\",\"state\":\"OFF\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Ventilation fan OFF"

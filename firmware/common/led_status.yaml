@@ -1,0 +1,85 @@
+# common/led_status.yaml
+# Status LED patterns for provisioning state feedback
+#
+# Requires substitution: ${status_led_pin} (e.g., GPIO8)
+#
+# LED patterns (self-contained, no external calls needed):
+#   Slow blink (1s cycle)     = NEEDS_WIFI — waiting for WiFi config
+#   Fast blink (200ms cycle)  = REGISTERING — talking to backend
+#   Solid ON                  = WAITING_CLAIM — claim code ready
+#   3 quick blinks + 2s pause = PROVISIONED — paired and running
+
+output:
+  - platform: gpio
+    pin:
+      number: ${status_led_pin}
+      inverted: true
+    id: status_led
+
+light:
+  - platform: binary
+    output: status_led
+    name: "Status LED"
+    id: led_light
+    internal: true
+
+script:
+  # Single loop that checks provisioning_state each cycle and blinks accordingly.
+  # Runs forever so provisioned pattern keeps showing.
+  - id: led_loop
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: 'return true;'
+          then:
+            - lambda: |-
+                static uint32_t led_log_counter = 0;
+                if (++led_log_counter % 10 == 1) {
+                  ESP_LOGI("led-dbg", "led_loop tick: provisioning_complete=%s, state=%s",
+                           id(provisioning_complete) ? "true" : "false",
+                           id(provisioning_state).c_str());
+                }
+            - if:
+                condition:
+                  lambda: 'return id(provisioning_complete);'
+                then:
+                  # PROVISIONED: 3 quick blinks + 2s pause
+                  - light.turn_on: led_light
+                  - delay: 100ms
+                  - light.turn_off: led_light
+                  - delay: 100ms
+                  - light.turn_on: led_light
+                  - delay: 100ms
+                  - light.turn_off: led_light
+                  - delay: 100ms
+                  - light.turn_on: led_light
+                  - delay: 100ms
+                  - light.turn_off: led_light
+                  - delay: 2000ms
+                else:
+                  - if:
+                      condition:
+                        lambda: 'return id(provisioning_state) == "WAITING_CLAIM";'
+                      then:
+                        # WAITING_CLAIM: solid ON
+                        - light.turn_on: led_light
+                        - delay: 500ms
+                      else:
+                        - if:
+                            condition:
+                              lambda: 'return id(provisioning_state) == "REGISTERING";'
+                            then:
+                              # REGISTERING: fast blink (200ms cycle)
+                              - light.turn_on: led_light
+                              - delay: 100ms
+                              - light.turn_off: led_light
+                              - delay: 100ms
+                            else:
+                              # NEEDS_WIFI / INIT: slow blink (1s cycle)
+                              - light.turn_on: led_light
+                              - delay: 500ms
+                              - light.turn_off: led_light
+                              - delay: 500ms
+
+# on_boot entry moved to base.yaml to avoid ESPHome package merge conflicts

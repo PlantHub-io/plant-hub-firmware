@@ -1,0 +1,130 @@
+# devices/example-s3zero.yaml
+#
+# PlantHub reference device — ESP32-S3 Zero
+#
+# Identical feature set to example-c3zero.yaml; only the board and pin
+# mappings differ. If your hardware matches the wiring below, flash as-is.
+# Otherwise copy to `my-device.yaml` and edit the substitutions.
+#
+# ============================================
+# WIRING DIAGRAM (ESP32-S3 Zero)
+# ============================================
+#
+#   ESP32-S3 Zero     Component
+#   -------------     ---------
+#   GPIO1          →  Soil Moisture Sensor AOUT
+#   GPIO8 (SDA)    →  BME280 SDA + BH1750 SDA
+#   GPIO9 (SCL)    →  BME280 SCL + BH1750 SCL
+#   GPIO3          →  Water Pump Relay IN
+#   GPIO4          →  Ventilation Fan Relay IN
+#   GPIO48         →  Status LED (on-board RGB on most S3 Zero boards)
+#   GPIO2          →  Factory Reset Button (momentary, to GND)
+#   3.3V           →  Sensor VCC
+#   5V             →  Relay module VCC
+#   GND            →  Common GND
+#
+# ============================================
+# FLASH & ONBOARD
+# ============================================
+#
+#   esphome run firmware/devices/example-s3zero.yaml
+#
+
+substitutions:
+  device_id: "planthub-s3-001"
+  device_name: "PlantHub S3 Node"
+  hardware_version: "esp32s3-zero-v1"
+  firmware_version: "1.1.0"
+
+  backend_url: !secret backend_url
+  device_provisioning_key: !secret device_provisioning_key
+
+  # Pins — ESP32-S3 Zero
+  soil_moisture_pin: GPIO1
+  i2c_sda_pin: GPIO8
+  i2c_scl_pin: GPIO9
+  pump_pin: GPIO3
+  fan_pin: GPIO4
+  status_led_pin: GPIO48
+  factory_reset_pin: GPIO2
+
+  bme280_address: "0x76"
+  bh1750_address: "0x23"
+
+  soil_dry_value: "2.8"
+  soil_wet_value: "1.2"
+
+  sensor_update_interval: "30s"
+  telemetry_interval: "60s"
+  pump_max_duration: "120"
+
+  capabilities_sensors: |-
+    msg += "{\"sensorKey\":\"soilMoisture\",\"sensorType\":\"capacitive_adc\",\"unit\":\"%\",\"displayName\":\"Soil Moisture\",\"minValue\":0,\"maxValue\":100,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"temperature\",\"sensorType\":\"bme280\",\"unit\":\"°C\",\"displayName\":\"Temperature\",\"minValue\":-40,\"maxValue\":85,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"humidity\",\"sensorType\":\"bme280\",\"unit\":\"%\",\"displayName\":\"Humidity\",\"minValue\":0,\"maxValue\":100,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"pressure\",\"sensorType\":\"bme280\",\"unit\":\"hPa\",\"displayName\":\"Pressure\",\"minValue\":300,\"maxValue\":1100,\"precision\":0.01},";
+    msg += "{\"sensorKey\":\"lightLevel\",\"sensorType\":\"bh1750\",\"unit\":\"lx\",\"displayName\":\"Light Level\",\"minValue\":0,\"maxValue\":65535,\"precision\":1}";
+
+  capabilities_actuators: |-
+    msg += "{\"actuatorKey\":\"waterPump\",\"actuatorType\":\"relay\",\"displayName\":\"Water Pump\",\"supportedCommands\":[\"ON\",\"OFF\"],\"controlType\":\"BINARY\",\"durationSupported\":true,\"maxDurationSeconds\":${pump_max_duration}},";
+    msg += "{\"actuatorKey\":\"ventFan\",\"actuatorType\":\"relay\",\"displayName\":\"Ventilation Fan\",\"supportedCommands\":[\"ON\",\"OFF\"],\"controlType\":\"BINARY\",\"durationSupported\":false}";
+
+  command_router: |-
+    if (actuator == "waterPump") {
+      if (durationSeconds > 0) {
+        int clamped = durationSeconds > ${pump_max_duration} ? ${pump_max_duration} : durationSeconds;
+        ESP_LOGI("command", "[waterPump] TIMED ON for %d seconds (requested=%d, max=${pump_max_duration})", clamped, durationSeconds);
+        id(pump_timed).execute(clamped);
+      } else if (action == "ON") {
+        ESP_LOGI("command", "[waterPump] ON (no duration, auto-off in ${pump_max_duration}s)");
+        id(water_pump).turn_on();
+      } else if (action == "OFF") {
+        ESP_LOGI("command", "[waterPump] OFF");
+        id(water_pump).turn_off();
+      } else {
+        ESP_LOGW("command", "[waterPump] Unknown action: %s", action.c_str());
+      }
+    } else if (actuator == "ventFan") {
+      if (action == "ON") {
+        ESP_LOGI("command", "[ventFan] ON");
+        id(vent_fan).turn_on();
+      } else if (action == "OFF") {
+        ESP_LOGI("command", "[ventFan] OFF");
+        id(vent_fan).turn_off();
+      } else {
+        ESP_LOGW("command", "[ventFan] Unknown action: %s", action.c_str());
+      }
+    } else {
+      ESP_LOGW("command", "Unknown actuator: %s (action=%s)", actuator.c_str(), action.c_str());
+    }
+
+esp32:
+  board: esp32-s3-devkitc-1
+  partitions: ../partitions.csv
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_ESP_MQTT_ENABLED: "y"
+      CONFIG_MQTT_TRANSPORT_SSL: "y"
+      CONFIG_MQTT_TRANSPORT_WEBSOCKET: "n"
+      CONFIG_MQTT_TRANSPORT_WEBSOCKET_SECURE: "n"
+    advanced:
+      include_builtin_idf_components:
+        - nvs_flash
+        - mqtt
+
+packages:
+  base:         !include ../common/base.yaml
+  wifi:         !include ../common/wifi.yaml
+  provisioning: !include ../common/provisioning.yaml
+  globals:      !include ../common/globals.yaml
+  status:       !include ../common/status.yaml
+  led:          !include ../common/led_status.yaml
+
+  soil:   !include ../sensors/soil_moisture_adc.yaml
+  bme280: !include ../sensors/bme280.yaml
+  bh1750: !include ../sensors/bh1750.yaml
+
+  pump: !include ../actuators/water_pump.yaml
+  fan:  !include ../actuators/vent_fan.yaml

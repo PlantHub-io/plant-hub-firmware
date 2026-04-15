@@ -1,0 +1,204 @@
+# common/status.yaml
+# Diagnostic sensors and telemetry/capabilities publishing scripts
+# Updated to use custom MQTT component with NVS-sourced topics
+
+# Diagnostic sensors (internal — not exposed to dashboard, used in telemetry)
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_rssi
+    update_interval: 60s
+    internal: true
+
+  - platform: uptime
+    name: "Uptime"
+    id: uptime_sensor
+    update_interval: 60s
+    internal: true
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      id: wifi_ip
+      internal: true
+
+# ============================================
+# SCRIPTS
+# ============================================
+
+script:
+  # --- Publish Capabilities (on boot, after MQTT connects) ---
+  # Backend expects this on: {tenant_id}/{node_id}/capabilities
+  # Format matches CapabilitiesMqttListener.CapabilitiesMessage record
+  - id: publish_capabilities
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: 'return id(capabilities_sent);'
+          then:
+            - logger.log: "Capabilities already sent this boot"
+          else:
+            - lambda: |-
+                if (!planthub::planthub_mqtt.is_connected()) {
+                  ESP_LOGW("capabilities", "MQTT not connected, skipping capabilities");
+                  return;
+                }
+
+                std::string msg = "{";
+                msg += "\"firmwareVersion\":\"${firmware_version}\",";
+                msg += "\"hardwareVersion\":\"${hardware_version}\",";
+
+                // Sensors array
+                msg += "\"sensors\":[";
+                ${capabilities_sensors}
+                msg += "],";
+
+                // Actuators array
+                msg += "\"actuators\":[";
+                ${capabilities_actuators}
+                msg += "]";
+
+                msg += "}";
+
+                planthub::planthub_mqtt.publish(
+                  planthub::planthub_mqtt.get_capabilities_topic(),
+                  msg, 1, false
+                );
+                id(capabilities_sent) = true;
+                ESP_LOGI("capabilities", "Published capabilities to %s", 
+                         planthub::planthub_mqtt.get_capabilities_topic().c_str());
+
+  # --- Publish Telemetry (periodic) ---
+  # Backend expects this on: {tenant_id}/{node_id}/sensors
+  # Format: {
+  #   "timestamp": <epoch_seconds>,
+  #   "sensors":   {"key": value, ...},
+  #   "telemetry": {"batteryMv": <int>, "rssi": <int>, "uptimeSec": <int>, "freeHeap": <int>}
+  # }
+  # The `telemetry` block is extracted by SensorIngestionService on the backend
+  # and persisted to the devices row (not to the sensor_readings hypertable).
+  - id: publish_telemetry
+    mode: single
+    then:
+      - lambda: |-
+          if (!planthub::planthub_mqtt.is_connected()) {
+            ESP_LOGW("telemetry", "MQTT not connected, skipping telemetry");
+            return;
+          }
+
+          auto now = id(sntp_time).now();
+          if (!now.is_valid()) {
+            ESP_LOGW("telemetry", "Time not synced yet, skipping telemetry");
+            return;
+          }
+
+          // WiFi RSSI and uptime may be NaN on the first publish if the sensor
+          // hasn't had its first update yet — coerce to 0 so the JSON stays valid.
+          float rssi_f   = id(wifi_rssi).state;
+          float uptime_f = id(uptime_sensor).state;
+          int   rssi     = std::isnan(rssi_f)   ? 0 : (int) rssi_f;
+          long  uptime_s = std::isnan(uptime_f) ? 0 : (long) uptime_f;
+
+          std::string msg = "{";
+          msg += "\"timestamp\":" + std::to_string(now.timestamp) + ",";
+          msg += "\"sensors\":{";
+          msg += planthub::buildSensorJson(id(sensor_values));
+          msg += "},";
+          msg += "\"telemetry\":{";
+          msg += "\"batteryMv\":" + std::to_string(id(battery_mv)) + ",";
+          msg += "\"rssi\":" + std::to_string(rssi) + ",";
+          msg += "\"uptimeSec\":" + std::to_string(uptime_s) + ",";
+          msg += "\"freeHeap\":" + std::to_string((unsigned long) esp_get_free_heap_size());
+          msg += "}";
+          msg += "}";
+
+          planthub::planthub_mqtt.publish(
+            planthub::planthub_mqtt.get_sensor_topic(),
+            msg, 1, false
+          );
+          ESP_LOGD("telemetry", "Published: %s", msg.c_str());
+
+  # --- Handle Actuator Commands from Backend ---
+  # Backend sends: {"nodeId":"...","commands":[{"actuator":"waterPump","action":"ON","parameters":{"durationSeconds":30}}]}
+  - id: handle_command
+    mode: queued
+    parameters:
+      payload: std::string
+    then:
+      - lambda: |-
+          ESP_LOGI("command", "Received: %s", payload.c_str());
+
+          // Parse commands array — iterate through each command object
+          // Find start of commands array
+          size_t cmdsStart = payload.find("\"commands\":[");
+          if (cmdsStart == std::string::npos) {
+            ESP_LOGW("command", "No commands array found");
+            return;
+          }
+
+          // Find each command object within the array
+          size_t searchFrom = cmdsStart;
+          while (true) {
+            size_t objStart = payload.find("{", searchFrom + 1);
+            if (objStart == std::string::npos) break;
+
+            // Check we haven't gone past the end of the commands array
+            size_t arrayEnd = payload.find("]", cmdsStart);
+            if (arrayEnd != std::string::npos && objStart > arrayEnd) break;
+
+            size_t objEnd = payload.find("}", objStart);
+            if (objEnd == std::string::npos) break;
+
+            std::string cmdObj = payload.substr(objStart, objEnd - objStart + 1);
+
+            // Extract actuator key
+            std::string actuator = planthub::extractJsonString(cmdObj, "actuator");
+            std::string action = planthub::extractJsonString(cmdObj, "action");
+            int durationSeconds = planthub::extractJsonInt(cmdObj, "durationSeconds", 0);
+
+            ESP_LOGI("command", "actuator=%s action=%s duration=%d",
+                     actuator.c_str(), action.c_str(), durationSeconds);
+
+            // Route to actuator
+            ${command_router}
+
+            searchFrom = objEnd;
+          }
+
+  # --- Handle System Commands from Backend ---
+  # Backend sends: {"command":"RESET","reason":"unclaimed","timestamp":...}
+  - id: handle_system_command
+    mode: queued
+    parameters:
+      payload: std::string
+    then:
+      - lambda: |-
+          ESP_LOGI("system", "Received system command: %s", payload.c_str());
+          std::string command = planthub::extractJsonString(payload, "command");
+          std::string reason = planthub::extractJsonString(payload, "reason");
+
+          if (command == "RESET") {
+            ESP_LOGW("system", "RESET command received (reason=%s), initiating soft reset...", reason.c_str());
+            id(soft_reset).execute();
+          } else {
+            ESP_LOGW("system", "Unknown system command: %s", command.c_str());
+          }
+
+# Telemetry publishing interval
+interval:
+  - interval: ${telemetry_interval}
+    then:
+      - script.execute: publish_telemetry
+
+  # Mock battery drift (no real ADC hardware yet).
+  # Slow random walk in [3500, 4200] mV so the dashboard shows realistic movement.
+  - interval: 60s
+    then:
+      - lambda: |-
+          int drift = (rand() % 11) - 5;   // -5..+5 mV per minute
+          int next = id(battery_mv) + drift;
+          if (next < 3500) next = 3500;
+          if (next > 4200) next = 4200;
+          id(battery_mv) = next;

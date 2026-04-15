@@ -1,0 +1,72 @@
+# actuators/heater.yaml
+# Greenhouse heater relay control with safety auto-shutoff
+#
+# Required substitutions:
+#   ${heater_pin}            — GPIO pin for relay (e.g. GPIO3)
+#   ${heater_max_duration}   — Max ON time in seconds (e.g. 1800)
+#
+# Wiring:
+#   ${heater_pin} → Relay IN
+#   5V            → Relay VCC
+#   GND           → Relay GND
+
+switch:
+  - platform: gpio
+    pin:
+      number: ${heater_pin}
+      mode: OUTPUT
+    name: "Heater"
+    id: heater
+    icon: "mdi:radiator"
+    restore_mode: ALWAYS_OFF
+
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(actuator_states)["heater"] = "ON";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"heater\",\"state\":\"ON\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Heater ON"
+        # Safety auto-shutoff after max duration
+        - delay: ${heater_max_duration}s
+        - if:
+            condition:
+              switch.is_on: heater
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "Heater safety auto-shutoff triggered after %s seconds"
+                  args: ['"${heater_max_duration}"']
+              - switch.turn_off: heater
+
+    on_turn_off:
+      then:
+        - lambda: |-
+            id(actuator_states)["heater"] = "OFF";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"heater\",\"state\":\"OFF\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Heater OFF"
+
+# Timed heater operation script
+script:
+  - id: heater_timed
+    mode: restart
+    parameters:
+      seconds: int
+    then:
+      - logger.log:
+          format: "Heater timed: %d seconds"
+          args: ['seconds']
+          level: INFO
+      - switch.turn_on: heater
+      - delay: !lambda 'return seconds * 1000;'
+      - switch.turn_off: heater
+      - logger.log: "Heater timed operation complete"

@@ -1,0 +1,44 @@
+# actuators/shade_blind.yaml
+# Greenhouse shade blind relay control (no duration support)
+#
+# Required substitutions:
+#   ${blind_pin} — GPIO pin for relay (e.g. GPIO4)
+#
+# Wiring:
+#   ${blind_pin} → Relay IN
+#   5V           → Relay VCC
+#   GND          → Relay GND
+
+switch:
+  - platform: gpio
+    pin:
+      number: ${blind_pin}
+      mode: OUTPUT
+    name: "Shade Blind"
+    id: shade_blind
+    icon: "mdi:blinds"
+    restore_mode: ALWAYS_OFF
+
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(actuator_states)["shadeBlind"] = "ON";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"shadeBlind\",\"state\":\"ON\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Shade blind ON"
+
+    on_turn_off:
+      then:
+        - lambda: |-
+            id(actuator_states)["shadeBlind"] = "OFF";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"shadeBlind\",\"state\":\"OFF\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Shade blind OFF"

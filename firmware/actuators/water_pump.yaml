@@ -1,0 +1,72 @@
+# actuators/water_pump.yaml
+# Water pump relay control with safety auto-shutoff
+#
+# Required substitutions:
+#   ${pump_pin}           — GPIO pin for relay (e.g. GPIO3)
+#   ${pump_max_duration}  — Max ON time in seconds (e.g. 120)
+#
+# Wiring:
+#   ${pump_pin} → Relay IN
+#   5V          → Relay VCC
+#   GND         → Relay GND
+
+switch:
+  - platform: gpio
+    pin:
+      number: ${pump_pin}
+      mode: OUTPUT
+    name: "Water Pump"
+    id: water_pump
+    icon: "mdi:water-pump"
+    restore_mode: ALWAYS_OFF
+
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(actuator_states)["waterPump"] = "ON";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"waterPump\",\"state\":\"ON\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Water pump ON"
+        # Safety auto-shutoff after max duration
+        - delay: ${pump_max_duration}s
+        - if:
+            condition:
+              switch.is_on: water_pump
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "Pump safety auto-shutoff triggered after %s seconds"
+                  args: ['"${pump_max_duration}"']
+              - switch.turn_off: water_pump
+
+    on_turn_off:
+      then:
+        - lambda: |-
+            id(actuator_states)["waterPump"] = "OFF";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"waterPump\",\"state\":\"OFF\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Water pump OFF"
+
+# Timed pump operation script (moved from status.yaml to keep it with the pump)
+script:
+  - id: pump_timed
+    mode: restart
+    parameters:
+      seconds: int
+    then:
+      - logger.log:
+          format: "Pump timed: %d seconds"
+          args: ['seconds']
+          level: INFO
+      - switch.turn_on: water_pump
+      - delay: !lambda 'return seconds * 1000;'
+      - switch.turn_off: water_pump
+      - logger.log: "Pump timed operation complete"

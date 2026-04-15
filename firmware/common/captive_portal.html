@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>PlantHub Setup</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;700&display=swap"
+        rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+            background: #f8f6f3;
+            background-image: radial-gradient(ellipse at 20% 50%, rgba(13, 148, 136, 0.08) 0%, transparent 50%), radial-gradient(ellipse at 80% 20%, rgba(194, 113, 79, 0.05) 0%, transparent 50%), radial-gradient(ellipse at 50% 80%, rgba(20, 184, 166, 0.06) 0%, transparent 50%);
+            color: #1a1714;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px
+        }
+
+        @media(prefers-color-scheme:dark) {
+            body {
+                background-color: #0c0a09;
+                color: #fafaf9;
+                background-image: radial-gradient(ellipse at 20% 50%, rgba(45, 212, 191, 0.06) 0%, transparent 50%), radial-gradient(ellipse at 80% 20%, rgba(232, 149, 111, 0.04) 0%, transparent 50%), radial-gradient(ellipse at 50% 80%, rgba(20, 184, 166, 0.05) 0%, transparent 50%)
+            }
+        }
+
+        .ct {
+            max-width: 420px;
+            width: 100%;
+            text-align: center;
+            animation: scaleIn .5s cubic-bezier(.4, 0, .2, 1)
+        }
+
+        .logo {
+            font-size: 28px;
+            font-weight: 700;
+            color: #0d9488;
+            margin: 20px 0 10px;
+            font-family: 'DM Sans', sans-serif
+        }
+
+        .logo span {
+            color: #14b8a6
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .logo {
+                color: #2dd4bf
+            }
+
+            .logo span {
+                color: #14b8a6
+            }
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 1rem;
+            padding: 24px;
+            margin: 16px 0;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            box-shadow: 0 10px 15px rgba(13, 148, 136, 0.08), 0 4px 6px rgba(28, 25, 23, 0.04)
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .card {
+                background: rgba(28, 25, 23, 0.75);
+                border-color: rgba(255, 255, 255, 0.08);
+                box-shadow: 0 10px 15px rgba(0, 0, 0, 0.3), 0 4px 6px rgba(0, 0, 0, 0.2)
+            }
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 14px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 600;
+            background: rgba(13, 148, 136, 0.1);
+            color: #0d9488;
+            margin-bottom: 12px
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .badge {
+                background: rgba(45, 212, 191, 0.1);
+                color: #2dd4bf
+            }
+        }
+
+        .sp {
+            display: inline-block;
+            width: 28px;
+            height: 28px;
+            border: 3px solid rgba(13, 148, 136, 0.15);
+            border-top: 3px solid #0d9488;
+            border-radius: 50%;
+            animation: s 1s linear infinite;
+            margin: 12px
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .sp {
+                border-color: rgba(45, 212, 191, 0.15);
+                border-top-color: #2dd4bf
+            }
+        }
+
+        @keyframes s {
+            to {
+                transform: rotate(360deg)
+            }
+        }
+
+        @keyframes scaleIn {
+            from {
+                opacity: 0;
+                transform: scale(.95)
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1)
+            }
+        }
+
+        @keyframes glowPulse {
+
+            0%,
+            100% {
+                box-shadow: 0 0 4px rgba(13, 148, 136, 0.3)
+            }
+
+            50% {
+                box-shadow: 0 0 16px rgba(13, 148, 136, 0.5)
+            }
+        }
+
+        .net {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            border: 1px solid #e7e5e4;
+            border-radius: 0.5rem;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: all .2s cubic-bezier(.4, 0, .2, 1)
+        }
+
+        .net:hover {
+            background: rgba(13, 148, 136, 0.04);
+            border-color: rgba(13, 148, 136, 0.3)
+        }
+
+        .net.sel {
+            background: rgba(13, 148, 136, 0.08);
+            border-color: #0d9488
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .net {
+                border-color: #292524
+            }
+
+            .net:hover {
+                background: rgba(45, 212, 191, 0.05);
+                border-color: rgba(45, 212, 191, 0.3)
+            }
+
+            .net.sel {
+                background: rgba(45, 212, 191, 0.1);
+                border-color: #2dd4bf
+            }
+        }
+
+        .net-ssid {
+            font-size: 14px;
+            color: #1a1714;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 240px
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .net-ssid {
+                color: #fafaf9
+            }
+        }
+
+        .net-info {
+            display: flex;
+            align-items: center;
+            flex-shrink: 0
+        }
+
+        .inp {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #e7e5e4;
+            border-radius: 0.5rem;
+            font-size: 14px;
+            margin-bottom: 8px;
+            outline: none;
+            transition: all .25s cubic-bezier(.4, 0, .2, 1);
+            background: #ffffff;
+            color: #1a1714;
+            font-family: 'IBM Plex Sans', sans-serif
+        }
+
+        .inp:focus {
+            border-color: #0d9488;
+            box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1), 0 0 20px rgba(13, 148, 136, 0.15)
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .inp {
+                background: #1c1917;
+                color: #fafaf9;
+                border-color: #292524
+            }
+
+            .inp:focus {
+                border-color: #2dd4bf;
+                box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.1), 0 0 20px rgba(45, 212, 191, 0.15)
+            }
+        }
+
+        .btn {
+            width: 100%;
+            padding: 10px;
+            background: linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #14b8a6 100%);
+            background-size: 200% auto;
+            color: #fff;
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all .3s cubic-bezier(.4, 0, .2, 1);
+            box-shadow: 0 1px 3px rgba(13, 148, 136, 0.06);
+            font-family: 'IBM Plex Sans', sans-serif
+        }
+
+        .btn:hover {
+            background-position: right center;
+            box-shadow: 0 4px 6px rgba(13, 148, 136, 0.06), 0 0 20px rgba(13, 148, 136, 0.25);
+            transform: translateY(-1px)
+        }
+
+        .btn:active {
+            transform: scale(.97) translateY(0);
+            box-shadow: 0 1px 2px rgba(13, 148, 136, 0.04)
+        }
+
+        .rbtn {
+            background: none;
+            border: 1px solid #e7e5e4;
+            border-radius: 0.5rem;
+            width: 32px;
+            height: 32px;
+            font-size: 18px;
+            cursor: pointer;
+            color: #78716c;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all .2s
+        }
+
+        .rbtn:hover {
+            border-color: #0d9488;
+            color: #0d9488;
+            background: rgba(13, 148, 136, 0.04)
+        }
+
+        .rbtn:active {
+            background: rgba(13, 148, 136, 0.08)
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .rbtn {
+                border-color: #292524;
+                color: #a8a29e
+            }
+
+            .rbtn:hover {
+                border-color: #2dd4bf;
+                color: #2dd4bf;
+                background: rgba(45, 212, 191, 0.05)
+            }
+        }
+
+        .manual {
+            display: block;
+            text-align: center;
+            margin-top: 10px;
+            font-size: 13px;
+            color: #0d9488;
+            text-decoration: none;
+            font-weight: 500
+        }
+
+        .manual:hover {
+            text-decoration: underline
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .manual {
+                color: #2dd4bf
+            }
+        }
+
+        .hint {
+            font-size: 13px;
+            color: #78716c;
+            margin-top: 12px
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .hint {
+                color: #a8a29e
+            }
+        }
+
+        .code {
+            font-size: 36px;
+            font-weight: 700;
+            letter-spacing: 10px;
+            color: #0d9488;
+            margin: 16px 0;
+            font-family: 'IBM Plex Mono', monospace;
+            padding: 18px;
+            background: rgba(13, 148, 136, 0.06);
+            border: 1px solid rgba(13, 148, 136, 0.15);
+            border-radius: 0.75rem;
+            animation: glowPulse 3s ease-in-out infinite
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .code {
+                color: #2dd4bf;
+                background: rgba(45, 212, 191, 0.08);
+                border-color: rgba(45, 212, 191, 0.15)
+            }
+        }
+
+        .ok {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: rgba(13, 148, 136, 0.1);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin: 12px 0
+        }
+
+        @media(prefers-color-scheme:dark) {
+            .ok {
+                background: rgba(45, 212, 191, 0.1)
+            }
+        }
+
+        footer {
+            margin-top: auto;
+            padding: 20px;
+            font-size: 11px;
+            color: #a8a29e;
+            font-family: 'IBM Plex Sans', sans-serif
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #e7e5e4;
+            border-radius: 3px
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #0d9488
+        }
+
+        @media(prefers-color-scheme:dark) {
+            ::-webkit-scrollbar-thumb {
+                background: #292524
+            }
+
+            ::-webkit-scrollbar-thumb:hover {
+                background: #2dd4bf
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="ct">
+        <div class="logo">Plant<span>Hub</span></div>
+        <div class="card">
+            <span class="badge" id="badge">Select WiFi</span>
+            <div id="wf">
+                <div id="wf-loading">
+                    <div class="sp"></div>
+                    <p>Scanning networks...</p>
+                </div>
+                <div id="wf-list" style="display:none">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                        <span style="font-size:14px;font-weight:600;color:#78716c">Available Networks</span>
+                        <button id="wf-refresh" class="rbtn" title="Rescan">&#x21bb;</button>
+                    </div>
+                    <div id="nets"></div>
+                    <a href="#" id="wf-other" class="manual">Other network (hidden)...</a>
+                </div>
+                <div id="wf-manual" style="display:none"><input id="m-ssid" class="inp" type="text"
+                        placeholder="Network name (SSID)"></div>
+                <div id="wf-pw" style="display:none">
+                    <div id="pw-ssid" style="font-size:13px;color:#78716c;margin-bottom:6px"></div><input id="pw-input"
+                        class="inp" type="password" placeholder="Password"><button id="pw-btn"
+                        class="btn">Connect</button>
+                </div>
+                <div id="wf-conn" style="display:none">
+                    <div class="sp"></div>
+                    <p>Connecting to WiFi...</p>
+                    <p class="hint">Please wait while your device registers</p>
+                </div>
+                <div id="wf-reg" style="display:none">
+                    <div class="sp"></div>
+                    <p>Registering device...</p>
+                    <p class="hint">Connecting to PlantHub servers</p>
+                </div>
+                <div id="wf-claim" style="display:none">
+                    <div id="claim-code" class="code"></div>
+                    <p style="font-size:13px;color:#78716c;line-height:1.6">Enter this code in the<br>PlantHub app to
+                        pair your device</p>
+                </div>
+                <div id="wf-done" style="display:none">
+                    <div class="ok"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#0d9488"
+                            stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20 6 9 17 4 12" />
+                        </svg></div>
+                    <p style="font-weight:600;color:#0d9488">Device Connected!</p>
+                </div>
+                <div id="wf-empty" style="display:none">
+                    <p style="color:#78716c;font-size:14px">No networks found.</p><button id="wf-retry" class="btn"
+                        style="margin-top:10px">Retry</button>
+                </div>
+                <div id="wf-timeout" style="display:none">
+                    <p style="color:#dc2626;font-size:14px;font-weight:600">Connection timed out</p>
+                    <p class="hint">Could not connect to WiFi. Check password and try again.</p><button id="wf-tryagain"
+                        class="btn" style="margin-top:10px">Try Again</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <footer>PlantHub Device Setup</footer>
+    <script>
+        (function () {
+            var selected = "", manual = false, poller = null, lastState = "", submitted = false, submitAt = 0, scanInFlight = false;
+            var CONNECT_TIMEOUT_MS = 90000;
+            function $(id) { return document.getElementById(id) }
+            var views = ["wf-loading", "wf-list", "wf-pw", "wf-manual", "wf-empty", "wf-conn", "wf-reg", "wf-claim", "wf-done", "wf-timeout"];
+            function show(id) { for (var i = 0; i < views.length; i++)$(views[i]).style.display = views[i] === id ? "" : "none" }
+            function now() { return Date.now ? Date.now() : (new Date()).getTime() }
+            function stopPoll() { if (poller) { clearInterval(poller); poller = null } }
+            function asForm(data) { var arr = []; for (var k in data) { if (Object.prototype.hasOwnProperty.call(data, k)) { arr.push(encodeURIComponent(k) + "=" + encodeURIComponent(data[k])) } } return arr.join("&") }
+            function postForm(url, data) { return fetch(url, { method: "POST", cache: "no-store", headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: asForm(data || {}) }) }
+            function mkSig(r) { var b = r >= -50 ? 4 : r >= -65 ? 3 : r >= -75 ? 2 : 1; var ns = "http://www.w3.org/2000/svg"; var svg = document.createElementNS(ns, "svg"); svg.setAttribute("width", "16"); svg.setAttribute("height", "14"); svg.setAttribute("viewBox", "0 0 16 14"); var bars = [[0, 10, 3, 4], [4, 7, 3, 7], [8, 4, 3, 10], [12, 0, 3, 14]]; for (var i = 0; i < 4; i++) { var rect = document.createElementNS(ns, "rect"); rect.setAttribute("x", bars[i][0]); rect.setAttribute("y", bars[i][1]); rect.setAttribute("width", bars[i][2]); rect.setAttribute("height", bars[i][3]); rect.setAttribute("rx", "1"); rect.setAttribute("fill", i < b ? "#0d9488" : "#ccc"); svg.appendChild(rect) } return svg }
+            function mkLock() { var ns = "http://www.w3.org/2000/svg"; var svg = document.createElementNS(ns, "svg"); svg.setAttribute("width", "12"); svg.setAttribute("height", "14"); svg.setAttribute("viewBox", "0 0 12 14"); svg.style.marginLeft = "4px"; var r = document.createElementNS(ns, "rect"); r.setAttribute("x", "1"); r.setAttribute("y", "6"); r.setAttribute("width", "10"); r.setAttribute("height", "7"); r.setAttribute("rx", "2"); r.setAttribute("fill", "#a8a29e"); var p = document.createElementNS(ns, "path"); p.setAttribute("d", "M3 6V4a3 3 0 0 1 6 0v2"); p.setAttribute("fill", "none"); p.setAttribute("stroke", "#a8a29e"); p.setAttribute("stroke-width", "1.5"); svg.appendChild(r); svg.appendChild(p); return svg }
+            function mkNet(ap) { var div = document.createElement("div"); div.className = "net"; var name = document.createElement("span"); name.className = "net-ssid"; name.textContent = ap.ssid; var info = document.createElement("span"); info.className = "net-info"; info.appendChild(mkSig(ap.rssi)); if (ap.lock) info.appendChild(mkLock()); div.appendChild(name); div.appendChild(info); div.addEventListener("click", function () { var prev = $("nets").querySelector(".sel"); if (prev) prev.classList.remove("sel"); div.classList.add("sel"); selected = ap.ssid; manual = false; $("wf-manual").style.display = "none"; $("pw-ssid").textContent = ap.ssid; $("pw-input").value = ""; if (!ap.lock) { $("wf-pw").style.display = "none"; doConnect(ap.ssid, "") } else { $("wf-pw").style.display = ""; $("pw-input").focus() } }); return div }
+            function applyStatus(d) { var st = d.state || ""; lastState = st; if (st === "WAITING_CLAIM" && (d.claimCode || "").length > 0) { $("badge").textContent = "Claim Code"; $("claim-code").textContent = d.claimCode; show("wf-claim"); return } if (st === "PROVISIONED") { $("badge").textContent = "Complete"; show("wf-done"); stopPoll(); return } if (st === "REGISTERING") { $("badge").textContent = "Registering"; show("wf-reg"); return } if (st === "CONNECTING" || submitted) { $("badge").textContent = "Connecting"; show("wf-conn"); return } $("badge").textContent = "Select WiFi" }
+            function pollTextSensorsFallback() { return fetch("/text_sensor/Provisioning Status", { cache: "no-store" }).then(function (r) { return r.json() }).then(function (ps) { var st = ps.state || ps.value || ""; return fetch("/text_sensor/Claim Code", { cache: "no-store" }).then(function (r) { return r.json() }).then(function (cc) { return { state: st, claimCode: (cc.state || cc.value || "") } }).catch(function () { return { state: st, claimCode: "" } }) }) }
+            function pollStatus() {
+                postForm("/provision-status", { ts: now() }).then(function (r) { return r.json() }).then(function (d) { applyStatus(d) }).catch(function () {
+                    fetch("/provision-status?ts=" + now(), { cache: "no-store" }).then(function (r) { return r.json() }).then(function (d) { applyStatus(d) }).catch(function () {
+                        pollTextSensorsFallback().then(function (d) { applyStatus(d) }).catch(function () { })
+                    })
+                });
+                if (submitted && submitAt && lastState !== "WAITING_CLAIM" && lastState !== "REGISTERING" && lastState !== "PROVISIONED" && (now() - submitAt) >= CONNECT_TIMEOUT_MS) { submitted = false; show("wf-timeout") }
+            }
+            function startPoll() { if (poller) return; poller = setInterval(pollStatus, 2000); pollStatus() }
+            function renderAps(d) { var aps = (d.aps || []).filter(function (a) { return a.ssid && a.ssid.length > 0 }); aps.sort(function (a, b) { return (b.rssi || -100) - (a.rssi || -100) }); var seen = {}, uniq = []; for (var i = 0; i < aps.length; i++) { if (!seen[aps[i].ssid]) { seen[aps[i].ssid] = 1; uniq.push(aps[i]) } } if (uniq.length === 0) { show("wf-empty"); return } var container = $("nets"); while (container.firstChild) container.removeChild(container.firstChild); for (var j = 0; j < uniq.length; j++)container.appendChild(mkNet(uniq[j])); $("badge").textContent = "Select WiFi"; show("wf-list") }
+            function scan() { if (scanInFlight) return; scanInFlight = true; show("wf-loading"); postForm("/scan", { ts: now() }).then(function (r) { return r.json() }).then(function (d) { renderAps(d); scanInFlight = false }).catch(function () { fetch("/scan?ts=" + now(), { cache: "no-store" }).then(function (r) { return r.json() }).then(function (d) { renderAps(d); scanInFlight = false }).catch(function () { fetch("/config.json?ts=" + now(), { cache: "no-store" }).then(function (r) { return r.json() }).then(function (d) { renderAps({ aps: d.aps || [] }); scanInFlight = false }).catch(function () { $("badge").textContent = "WiFi Scan Failed"; show("wf-empty"); scanInFlight = false }) }) }) }
+            function doConnect(ssid, psk) { submitted = true; submitAt = now(); $("badge").textContent = "Connecting"; show("wf-conn"); postForm("/wifisave", { ssid: ssid, psk: psk, ts: now() }).catch(function () { fetch("/wifisave?ssid=" + encodeURIComponent(ssid) + "&psk=" + encodeURIComponent(psk) + "&ts=" + now(), { cache: "no-store" }).catch(function () { }) }); startPoll() }
+            $("wf-refresh").addEventListener("click", function () { scan() });
+            $("wf-other").addEventListener("click", function (e) { e.preventDefault(); manual = true; selected = ""; var prev = $("nets").querySelector(".sel"); if (prev) prev.classList.remove("sel"); $("wf-manual").style.display = ""; $("pw-ssid").textContent = "Hidden network"; $("pw-input").value = ""; $("wf-pw").style.display = ""; $("m-ssid").focus() });
+            $("pw-btn").addEventListener("click", function () { var ssid = manual ? $("m-ssid").value.trim() : selected; var psk = $("pw-input").value; if (!ssid) return; doConnect(ssid, psk) });
+            $("pw-input").addEventListener("keydown", function (e) { if (e.key === "Enter") $("pw-btn").click() });
+            if ($("wf-retry")) $("wf-retry").addEventListener("click", function () { submitted = false; scan() });
+            if ($("wf-tryagain")) $("wf-tryagain").addEventListener("click", function () { submitted = false; scan() });
+            scan();
+            startPoll();
+        })();
+    </script>
+</body>
+
+</html>

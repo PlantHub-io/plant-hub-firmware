@@ -1,0 +1,102 @@
+# devices/my-device.yaml.example
+#
+# Minimal starter configuration. Copy this file to `my-device.yaml` and
+# edit the lines marked  <EDIT>  to match your hardware.
+#
+#   cp firmware/devices/my-device.yaml.example firmware/devices/my-device.yaml
+#   esphome run firmware/devices/my-device.yaml
+#
+# What this starter includes:
+#   - 1 sensor:   BME280 (temperature, humidity, pressure — I2C)
+#   - 1 actuator: Water pump (GPIO relay with safety auto-off)
+#
+# To add more sensors or actuators, copy the relevant block from
+# example-c3zero.yaml, or see ../../docs/CUSTOMIZATION.md.
+#
+
+substitutions:
+  # <EDIT> Unique id per device. Letters, digits, hyphens.
+  device_id: "my-planthub-001"
+  device_name: "My PlantHub Node"
+  hardware_version: "custom-v1"
+  firmware_version: "1.0.0"
+
+  backend_url: !secret backend_url
+  device_provisioning_key: !secret device_provisioning_key
+
+  # <EDIT> Pin mappings for your wiring.
+  # Default values target an ESP32-C3 Zero. For other boards, consult
+  # ../../docs/HARDWARE.md and your board's datasheet.
+  i2c_sda_pin: GPIO6
+  i2c_scl_pin: GPIO7
+  pump_pin: GPIO3
+  status_led_pin: GPIO8
+  factory_reset_pin: GPIO9
+
+  # <EDIT> BME280 I2C address. 0x76 is default; some boards use 0x77.
+  bme280_address: "0x76"
+
+  sensor_update_interval: "30s"
+  telemetry_interval: "60s"
+  pump_max_duration: "120"
+
+  # Capabilities advertised to backend. If you add/remove packages below,
+  # update these two blocks to match. See ../../docs/CUSTOMIZATION.md.
+  capabilities_sensors: |-
+    msg += "{\"sensorKey\":\"temperature\",\"sensorType\":\"bme280\",\"unit\":\"°C\",\"displayName\":\"Temperature\",\"minValue\":-40,\"maxValue\":85,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"humidity\",\"sensorType\":\"bme280\",\"unit\":\"%\",\"displayName\":\"Humidity\",\"minValue\":0,\"maxValue\":100,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"pressure\",\"sensorType\":\"bme280\",\"unit\":\"hPa\",\"displayName\":\"Pressure\",\"minValue\":300,\"maxValue\":1100,\"precision\":0.01}";
+
+  capabilities_actuators: |-
+    msg += "{\"actuatorKey\":\"waterPump\",\"actuatorType\":\"relay\",\"displayName\":\"Water Pump\",\"supportedCommands\":[\"ON\",\"OFF\"],\"controlType\":\"BINARY\",\"durationSupported\":true,\"maxDurationSeconds\":${pump_max_duration}}";
+
+  # Command router — called once per command received from the backend.
+  # Add a branch for every actuator you expose in capabilities_actuators.
+  command_router: |-
+    if (actuator == "waterPump") {
+      if (durationSeconds > 0) {
+        int clamped = durationSeconds > ${pump_max_duration} ? ${pump_max_duration} : durationSeconds;
+        ESP_LOGI("command", "[waterPump] TIMED ON for %d seconds", clamped);
+        id(pump_timed).execute(clamped);
+      } else if (action == "ON") {
+        id(water_pump).turn_on();
+      } else if (action == "OFF") {
+        id(water_pump).turn_off();
+      }
+    } else {
+      ESP_LOGW("command", "Unknown actuator: %s", actuator.c_str());
+    }
+
+# <EDIT> Board type. Common values:
+#   esp32-c3-devkitm-1   (ESP32-C3 Zero / SuperMini)
+#   esp32-s3-devkitc-1   (ESP32-S3 Zero / DevKitC)
+#   esp32dev             (classic ESP32 DevKit)
+# Full list: https://registry.platformio.org/platforms/platformio/espressif32/boards
+esp32:
+  board: esp32-c3-devkitm-1
+  partitions: ../partitions.csv
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_ESP_MQTT_ENABLED: "y"
+      CONFIG_MQTT_TRANSPORT_SSL: "y"
+      CONFIG_MQTT_TRANSPORT_WEBSOCKET: "n"
+      CONFIG_MQTT_TRANSPORT_WEBSOCKET_SECURE: "n"
+    advanced:
+      include_builtin_idf_components:
+        - nvs_flash
+        - mqtt
+
+packages:
+  # Core — leave these alone.
+  base:         !include ../common/base.yaml
+  wifi:         !include ../common/wifi.yaml
+  provisioning: !include ../common/provisioning.yaml
+  globals:      !include ../common/globals.yaml
+  status:       !include ../common/status.yaml
+  led:          !include ../common/led_status.yaml
+
+  # Sensors and actuators — add more packages here as you wire up hardware.
+  bme280: !include ../sensors/bme280.yaml
+  pump:   !include ../actuators/water_pump.yaml

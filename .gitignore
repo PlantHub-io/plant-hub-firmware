@@ -1,0 +1,11 @@
+firmware/devices/secrets.yaml
+firmware/devices/my-device.yaml
+.esphome/
+__pycache__/
+*.pyc
+.venv*/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

@@ -1,0 +1,72 @@
+# actuators/mist_sprayer.yaml
+# Mist sprayer relay control with safety auto-shutoff
+#
+# Required substitutions:
+#   ${sprayer_pin}            — GPIO pin for relay (e.g. GPIO4)
+#   ${sprayer_max_duration}   — Max ON time in seconds (e.g. 300)
+#
+# Wiring:
+#   ${sprayer_pin} → Relay IN
+#   5V             → Relay VCC
+#   GND            → Relay GND
+
+switch:
+  - platform: gpio
+    pin:
+      number: ${sprayer_pin}
+      mode: OUTPUT
+    name: "Mist Sprayer"
+    id: mist_sprayer
+    icon: "mdi:spray"
+    restore_mode: ALWAYS_OFF
+
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(actuator_states)["mistSprayer"] = "ON";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"mistSprayer\",\"state\":\"ON\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Mist sprayer ON"
+        # Safety auto-shutoff after max duration
+        - delay: ${sprayer_max_duration}s
+        - if:
+            condition:
+              switch.is_on: mist_sprayer
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "Mist sprayer safety auto-shutoff triggered after %s seconds"
+                  args: ['"${sprayer_max_duration}"']
+              - switch.turn_off: mist_sprayer
+
+    on_turn_off:
+      then:
+        - lambda: |-
+            id(actuator_states)["mistSprayer"] = "OFF";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"mistSprayer\",\"state\":\"OFF\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "Mist sprayer OFF"
+
+# Timed mist sprayer operation script
+script:
+  - id: sprayer_timed
+    mode: restart
+    parameters:
+      seconds: int
+    then:
+      - logger.log:
+          format: "Mist sprayer timed: %d seconds"
+          args: ['seconds']
+          level: INFO
+      - switch.turn_on: mist_sprayer
+      - delay: !lambda 'return seconds * 1000;'
+      - switch.turn_off: mist_sprayer
+      - logger.log: "Mist sprayer timed operation complete"

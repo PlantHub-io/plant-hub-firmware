@@ -1,0 +1,128 @@
+# common/led_status_neopixel.yaml
+# NeoPixel (WS2812B) status LED with ARGB color-coded provisioning states
+#
+# Requires substitution: ${neopixel_pin} (e.g., GPIO21)
+#
+# Color patterns:
+#   Pulsing blue              = NEEDS_WIFI — waiting for WiFi config
+#   Fast blinking yellow      = REGISTERING — talking to backend
+#   Solid green               = WAITING_CLAIM — claim code ready
+#   Breathing cyan             = PROVISIONED — paired and running
+#   Red flash                 = Error / disconnected
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: led_light
+    name: "Status LED"
+    pin: ${neopixel_pin}
+    num_leds: 1
+    rgb_order: RGB
+    chipset: WS2812
+    internal: true
+    default_transition_length: 0ms
+    effects:
+      - pulse:
+          name: "Pulse Blue"
+          transition_length: 800ms
+          update_interval: 800ms
+          min_brightness: 10%
+          max_brightness: 80%
+      - pulse:
+          name: "Breathe Cyan"
+          transition_length: 1500ms
+          update_interval: 1500ms
+          min_brightness: 5%
+          max_brightness: 60%
+      - strobe:
+          name: "Fast Yellow"
+          colors:
+            - state: true
+              brightness: 80%
+              red: 100%
+              green: 70%
+              blue: 0%
+              duration: 100ms
+            - state: false
+              duration: 100ms
+      - strobe:
+          name: "Flash Red"
+          colors:
+            - state: true
+              brightness: 100%
+              red: 100%
+              green: 0%
+              blue: 0%
+              duration: 150ms
+            - state: false
+              duration: 350ms
+
+script:
+  # Single loop that checks provisioning_state each cycle and sets LED color/effect.
+  # Runs forever so the provisioned pattern keeps showing.
+  - id: led_loop
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: 'return true;'
+          then:
+            - lambda: |-
+                static uint32_t led_log_counter = 0;
+                if (++led_log_counter % 10 == 1) {
+                  ESP_LOGI("led-dbg", "led_loop tick: provisioning_complete=%s, state=%s",
+                           id(provisioning_complete) ? "true" : "false",
+                           id(provisioning_state).c_str());
+                }
+            - if:
+                condition:
+                  lambda: 'return id(provisioning_complete);'
+                then:
+                  # PROVISIONED: breathing cyan
+                  - light.turn_on:
+                      id: led_light
+                      red: 0%
+                      green: 100%
+                      blue: 100%
+                      brightness: 60%
+                      effect: "Breathe Cyan"
+                  - delay: 3000ms
+                else:
+                  - if:
+                      condition:
+                        lambda: 'return id(provisioning_state) == "WAITING_CLAIM";'
+                      then:
+                        # WAITING_CLAIM: solid green
+                        - light.turn_on:
+                            id: led_light
+                            red: 0%
+                            green: 100%
+                            blue: 0%
+                            brightness: 70%
+                            effect: none
+                        - delay: 500ms
+                      else:
+                        - if:
+                            condition:
+                              lambda: 'return id(provisioning_state) == "REGISTERING";'
+                            then:
+                              # REGISTERING: fast blinking yellow
+                              - light.turn_on:
+                                  id: led_light
+                                  red: 100%
+                                  green: 70%
+                                  blue: 0%
+                                  brightness: 80%
+                                  effect: "Fast Yellow"
+                              - delay: 500ms
+                            else:
+                              # NEEDS_WIFI / INIT: pulsing blue
+                              - light.turn_on:
+                                  id: led_light
+                                  red: 0%
+                                  green: 0%
+                                  blue: 100%
+                                  brightness: 80%
+                                  effect: "Pulse Blue"
+                              - delay: 1000ms
+
+# on_boot entry is in base.yaml to avoid ESPHome package merge conflicts

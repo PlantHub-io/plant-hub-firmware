@@ -1,0 +1,92 @@
+# actuators/_template.yaml
+#
+# Template for adding a new actuator to a PlantHub device.
+#
+# Copy to a new file (e.g. actuators/humidifier.yaml), adjust the switch
+# block for your hardware, and wire it up in your device YAML.
+#
+# --------------------------------------------------------------------
+# WHAT "ACTUATOR" MEANS HERE
+# --------------------------------------------------------------------
+# Anything the backend can turn on or off: pumps, fans, grow lights,
+# heaters, mist sprayers, servos, solenoid valves, etc. The simplest
+# actuators are relay-driven GPIO switches; for PWM-dimmed devices see
+# actuators/shade_blind.yaml or actuators/heater.yaml for reference.
+#
+# --------------------------------------------------------------------
+# STEP 1. Declare substitutions in your device YAML
+# --------------------------------------------------------------------
+#   substitutions:
+#     humidifier_pin: GPIO5
+#
+# --------------------------------------------------------------------
+# STEP 2. Mirror state into actuator_states
+# --------------------------------------------------------------------
+# Whenever the actuator turns on/off, update the `actuator_states` map
+# and publish an actuator-state message. The pattern in the lambdas below
+# matches actuators/water_pump.yaml and actuators/vent_fan.yaml — copy
+# that structure and only change the actuatorKey string.
+#
+# --------------------------------------------------------------------
+# STEP 3. Advertise in capabilities
+# --------------------------------------------------------------------
+# In your device YAML, extend `capabilities_actuators`:
+#
+#   msg += "{\"actuatorKey\":\"humidifier\",\"actuatorType\":\"relay\",\"displayName\":\"Humidifier\",\"supportedCommands\":[\"ON\",\"OFF\"],\"controlType\":\"BINARY\",\"durationSupported\":false}";
+#
+# --------------------------------------------------------------------
+# STEP 4. Handle commands in the command_router
+# --------------------------------------------------------------------
+# In your device YAML, add a branch to `command_router`:
+#
+#   else if (actuator == "humidifier") {
+#     if (action == "ON")  id(humidifier).turn_on();
+#     if (action == "OFF") id(humidifier).turn_off();
+#   }
+#
+# --------------------------------------------------------------------
+# STEP 5. Include the package
+# --------------------------------------------------------------------
+#   my_actuator: !include ../actuators/humidifier.yaml
+#
+# --------------------------------------------------------------------
+# SAFETY NOTE
+# --------------------------------------------------------------------
+# If your actuator could cause damage when stuck on (e.g. a pump that
+# runs dry, a heater), copy the safety auto-off pattern from
+# actuators/water_pump.yaml: in `on_turn_on` schedule a `delay` +
+# `switch.turn_off`. Do NOT rely on the backend to send an OFF command.
+
+switch:
+  - platform: gpio
+    pin:
+      number: ${my_actuator_pin}    # <-- rename this substitution to match your hardware
+      mode: OUTPUT
+    name: "My Actuator"
+    id: my_actuator
+    icon: "mdi:toggle-switch"
+    restore_mode: ALWAYS_OFF
+
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(actuator_states)["myActuator"] = "ON";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"myActuator\",\"state\":\"ON\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "My actuator ON"
+
+    on_turn_off:
+      then:
+        - lambda: |-
+            id(actuator_states)["myActuator"] = "OFF";
+            if (planthub::planthub_mqtt.is_connected()) {
+              std::string msg = "{\"actuator\":\"myActuator\",\"state\":\"OFF\"}";
+              planthub::planthub_mqtt.publish(
+                planthub::planthub_mqtt.get_actuator_state_topic(), msg, 1, false
+              );
+            }
+        - logger.log: "My actuator OFF"

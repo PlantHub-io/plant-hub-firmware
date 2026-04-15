@@ -1,0 +1,45 @@
+# sensors/soil_moisture_adc.yaml
+# Capacitive soil moisture sensor via ADC
+#
+# Required substitutions:
+#   ${soil_moisture_pin}  — GPIO pin (e.g. GPIO1)
+#   ${soil_dry_value}     — ADC voltage when sensor is in dry air (e.g. 2.8)
+#   ${soil_wet_value}     — ADC voltage when sensor is submerged in water (e.g. 1.2)
+#   ${sensor_update_interval} — how often to read (e.g. 30s)
+#
+# Wiring:
+#   AOUT → ${soil_moisture_pin}
+#   VCC  → 3.3V
+#   GND  → GND
+
+sensor:
+  # Raw ADC reading (internal, not exposed)
+  - platform: adc
+    pin: ${soil_moisture_pin}
+    name: "Soil Moisture Raw"
+    id: soil_raw
+    attenuation: 12db
+    update_interval: ${sensor_update_interval}
+    internal: true
+
+  # Calibrated percentage (0-100%)
+  - platform: template
+    name: "Soil Moisture"
+    id: soil_moisture
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    icon: "mdi:water-percent"
+    update_interval: ${sensor_update_interval}
+    lambda: |-
+      float raw = id(soil_raw).state;
+      if (isnan(raw)) return NAN;
+
+      float dry = ${soil_dry_value};
+      float wet = ${soil_wet_value};
+      float pct = (dry - raw) / (dry - wet) * 100.0;
+
+      if (pct < 0) pct = 0;
+      if (pct > 100) pct = 100;
+
+      id(sensor_values)["soilMoisture"] = pct;
+      return pct;

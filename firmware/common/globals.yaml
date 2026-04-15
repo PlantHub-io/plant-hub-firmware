@@ -1,0 +1,28 @@
+# common/globals.yaml
+# Global variables for device state management
+
+globals:
+  # Sensor value storage: sensorKey -> latest reading
+  # e.g. {"soilMoisture": 42.7, "temperature": 23.4}
+  - id: sensor_values
+    type: std::map<std::string, float>
+    restore_value: no
+
+  # Actuator state storage: actuatorKey -> "ON"/"OFF"
+  # e.g. {"waterPump": "OFF", "ventFan": "OFF"}
+  - id: actuator_states
+    type: std::map<std::string, std::string>
+    restore_value: no
+
+  # Tracks whether capabilities have been published this boot
+  - id: capabilities_sent
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  # Mock battery voltage in millivolts (no real ADC wired on c3zero/s3zero yet).
+  # Drifted by a periodic interval in common/status.yaml so dashboards show movement.
+  - id: battery_mv
+    type: int
+    restore_value: no
+    initial_value: '4100'

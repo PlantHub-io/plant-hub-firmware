@@ -1,0 +1,515 @@
+# common/provisioning.yaml
+# Device self-provisioning package for PlantHub
+#
+# Provisioning flow:
+#   1. Boot → check NVS for saved config
+#   2. If not provisioned → wait for WiFi (via captive portal)
+#   3. WiFi connects → POST /devices/self-register → get nodeId + claimCode
+#   4. Display claim code on web UI → poll GET /devices/{nodeId}/mqtt-config
+#   5. User enters claim code in dashboard → backend provisions AWS IoT
+#   6. Poll returns READY → save certs to NVS → start MQTT client
+#
+# The branded provisioning page HTML is in provisioning_page.h.
+# Text sensors below also expose claim code on the default ESPHome web UI.
+
+# on_boot entries and includes moved to base.yaml to avoid ESPHome package
+# merge conflicts (only the last package's esphome: on_boot: survives).
+
+# HTTP client for backend API calls (self-register + poll mqtt-config)
+http_request:
+  useragent: "PlantHub-ESP32/${firmware_version}"
+  timeout: 10s
+
+# Global variables for provisioning state
+globals:
+  - id: provisioning_complete
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: device_node_id
+    type: std::string
+    restore_value: no
+
+  - id: device_claim_code
+    type: std::string
+    restore_value: no
+
+  - id: device_tenant_id
+    type: std::string
+    restore_value: no
+
+  - id: device_provisioning_token
+    type: std::string
+    restore_value: no
+
+  - id: provisioning_state
+    type: std::string
+    restore_value: no
+    initial_value: '"INIT"'
+
+# Text sensors for displaying provisioning status on web UI
+text_sensor:
+  - platform: template
+    name: "Provisioning Status"
+    id: provisioning_status_sensor
+    lambda: |-
+      return id(provisioning_state);
+    update_interval: never
+
+  - platform: template
+    name: "Claim Code"
+    id: claim_code_sensor
+    lambda: |-
+      return id(device_claim_code);
+    update_interval: never
+
+  - platform: template
+    name: "Node ID"
+    id: node_id_sensor
+    lambda: |-
+      return id(device_node_id);
+    update_interval: never
+
+# Scripts for provisioning flow
+script:
+  # --- Check NVS for saved config on boot ---
+  - id: check_nvs_config
+    mode: single
+    then:
+      - lambda: |-
+          // Read NVS to check for existing provisioning data
+          planthub::nvs_log_free_space();
+
+          std::string node_id = planthub::nvs_read("node_id");
+          std::string tenant_id = planthub::nvs_read("tenant_id");
+          std::string mqtt_provider = planthub::nvs_read("mqtt_provider");
+
+          if (!node_id.empty() && !tenant_id.empty() && !mqtt_provider.empty()) {
+            ESP_LOGI("provisioning", "Found saved config, device is provisioned");
+            id(device_node_id) = node_id;
+            id(device_tenant_id) = tenant_id;
+            id(provisioning_complete) = true;
+            id(provisioning_state) = "PROVISIONED";
+
+            // Set mDNS hostname to planthub-{nodeId}.local
+            std::string mdns_name = "planthub-" + node_id;
+            mdns_hostname_set(mdns_name.c_str());
+            ESP_LOGI("provisioning", "mDNS hostname set to %s.local", mdns_name.c_str());
+
+            // Initialize MQTT
+            if (planthub::planthub_mqtt.setup()) {
+              planthub::planthub_mqtt.start();
+              // Register callback for inbound topics (actuators, system commands)
+              planthub::planthub_mqtt.set_callback([](const std::string &topic, const std::string &payload) {
+                // Extract sub-topic type (last segment after base_topic)
+                size_t lastSlash = topic.rfind('/');
+                if (lastSlash == std::string::npos) return;
+                std::string type = topic.substr(lastSlash + 1);
+                if (type == "actuators") {
+                  id(handle_command).execute(payload);
+                } else if (type == "system") {
+                  id(handle_system_command).execute(payload);
+                }
+              });
+              ESP_LOGI("provisioning", "MQTT started and subscribed");
+            } else {
+              // MQTT setup failed (e.g. missing endpoint in NVS).
+              // Clear stale provisioning data and re-enter the self-register flow
+              // so the device can get fresh MQTT config from the backend.
+              ESP_LOGW("provisioning", "MQTT setup failed on boot, clearing stale NVS and re-provisioning...");
+              planthub::nvs_delete("tenant_id");
+              planthub::nvs_delete("mqtt_provider");
+              planthub::nvs_delete("mqtt_endpoint");
+              planthub::nvs_delete("mqtt_cert");
+              planthub::nvs_delete("mqtt_key");
+              planthub::nvs_save();
+              id(provisioning_complete) = false;
+              id(provisioning_state) = "NEEDS_WIFI";
+            }
+          } else if (!node_id.empty()) {
+            // Device was registered but not yet claimed (e.g., rebooted during claim wait)
+            ESP_LOGI("provisioning", "Found node_id but not fully provisioned, will re-register after WiFi");
+            id(device_node_id) = node_id;
+            // Restore provisioning token from NVS if available
+            std::string prov_token = planthub::nvs_read("prov_token");
+            if (!prov_token.empty()) {
+              id(device_provisioning_token) = prov_token;
+            }
+            id(provisioning_state) = "NEEDS_WIFI";
+
+            // Set mDNS hostname even if not yet fully provisioned
+            std::string mdns_name = "planthub-" + node_id;
+            mdns_hostname_set(mdns_name.c_str());
+            ESP_LOGI("provisioning", "mDNS hostname set to %s.local", mdns_name.c_str());
+          } else {
+            ESP_LOGI("provisioning", "No saved config, waiting for WiFi...");
+            id(provisioning_state) = "NEEDS_WIFI";
+          }
+      - component.update: provisioning_status_sensor
+
+  # --- Self-register with backend ---
+  # Called when WiFi connects and device is not yet provisioned.
+  # POST /api/v1/devices/self-register with MAC, firmware/hardware versions.
+  # Backend returns nodeId + 8-char claimCode wrapped in ApiResponse.
+  - id: self_register
+    mode: single
+    then:
+      - lambda: |-
+          id(provisioning_state) = "REGISTERING";
+          ESP_LOGI("provisioning", "Starting self-registration...");
+      - component.update: provisioning_status_sensor
+      - delay: 100ms  # Yield to prevent watchdog
+      - http_request.post:
+          url: "${backend_url}/api/v1/devices/self-register"
+          request_headers:
+            Content-Type: application/json
+            X-Device-Key: "${device_provisioning_key}"
+          body: !lambda |-
+            std::string mac = get_mac_address_pretty();
+            return "{\"macAddress\":\"" + mac +
+                   "\",\"firmwareVersion\":\"${firmware_version}" +
+                   "\",\"hardwareVersion\":\"${hardware_version}\"}";
+          capture_response: true
+          max_response_buffer_size: 1024
+          on_error:
+            then:
+              - lambda: |-
+                  ESP_LOGW("provisioning", "Self-register HTTP request failed (network error)");
+          on_response:
+            then:
+              - lambda: |-
+                  // Check if response is valid
+                  if (response == nullptr) {
+                    ESP_LOGE("provisioning", "HTTP response is null");
+                    return;
+                  }
+                  
+                  ESP_LOGI("provisioning", "Self-register response: HTTP %d", response->status_code);
+                  
+                  if (response->status_code == 200) {
+                    // Response is ApiResponse<SelfRegisterResponse>:
+                    // {"success":true,"data":{"nodeId":"...","claimCode":"...","provisioningToken":"..."}}
+                    std::string nid = planthub::extractJsonString(body, "nodeId");
+                    std::string cc = planthub::extractJsonString(body, "claimCode");
+                    std::string ptoken = planthub::extractJsonString(body, "provisioningToken");
+
+                    // Save provisioning token for mqtt-config auth
+                    if (!ptoken.empty()) {
+                      id(device_provisioning_token) = ptoken;
+                      planthub::nvs_write("prov_token", ptoken);
+                    }
+
+                    if (!nid.empty() && !cc.empty()) {
+                      ESP_LOGI("provisioning", "Registered! nodeId=%s claimCode=%s",
+                               nid.c_str(), cc.c_str());
+
+                      // Save to globals
+                      id(device_node_id) = nid;
+                      id(device_claim_code) = cc;
+
+                      // Set mDNS hostname to planthub-{nodeId}.local
+                      std::string mdns_name = "planthub-" + nid;
+                      mdns_hostname_set(mdns_name.c_str());
+                      ESP_LOGI("provisioning", "mDNS hostname set to %s.local", mdns_name.c_str());
+
+                      // Persist nodeId to NVS (survives reboot during claim wait)
+                      planthub::nvs_write("node_id", nid);
+                      planthub::nvs_save();
+
+                      // Update state
+                      id(provisioning_state) = "WAITING_CLAIM";
+
+                      // Publish to text sensors so web UI updates
+                      id(provisioning_status_sensor).publish_state("WAITING_CLAIM");
+                      id(claim_code_sensor).publish_state(cc);
+                      id(node_id_sensor).publish_state(nid);
+
+                      // Start polling for MQTT config (user needs to claim in dashboard)
+                      id(poll_mqtt_config).execute();
+                    } else if (!nid.empty() && cc.empty()) {
+                      // Device is already claimed — claimCode is null/empty.
+                      // Skip WAITING_CLAIM and go directly to MQTT config polling.
+                      ESP_LOGI("provisioning", "Device already claimed! nodeId=%s, skipping to MQTT config", nid.c_str());
+
+                      id(device_node_id) = nid;
+
+                      // Set mDNS hostname
+                      std::string mdns_name2 = "planthub-" + nid;
+                      mdns_hostname_set(mdns_name2.c_str());
+                      ESP_LOGI("provisioning", "mDNS hostname set to %s.local", mdns_name2.c_str());
+
+                      planthub::nvs_write("node_id", nid);
+                      planthub::nvs_save();
+
+                      id(provisioning_state) = "WAITING_CLAIM";
+                      id(provisioning_status_sensor).publish_state("WAITING_CLAIM");
+                      id(node_id_sensor).publish_state(nid);
+
+                      id(poll_mqtt_config).execute();
+                    } else {
+                      ESP_LOGE("provisioning", "Failed to parse self-register response: body=%s", body.c_str());
+                    }
+                  } else {
+                    ESP_LOGE("provisioning", "Self-register failed: HTTP %d", response->status_code);
+                  }
+      - if:
+          condition:
+            lambda: 'return id(provisioning_state) != "WAITING_CLAIM" && id(provisioning_state) != "PROVISIONED";'
+          then:
+            - logger.log:
+                format: "Self-registration not complete, scheduling retry..."
+                level: WARN
+            - script.execute: self_register_retry
+
+  # --- Retry self-registration after delay ---
+  # Separate script so self_register (mode:single) can finish before re-executing.
+  - id: self_register_retry
+    mode: restart
+    then:
+      - delay: 20s
+      - if:
+          condition:
+            lambda: 'return id(provisioning_state) != "WAITING_CLAIM" && id(provisioning_state) != "PROVISIONED";'
+          then:
+            - script.execute: self_register
+
+  # --- Poll backend for MQTT configuration ---
+  # After self-registration, the device polls GET /devices/{nodeId}/mqtt-config
+  # every 10 seconds. The backend returns "UNCLAIMED" until the user enters the
+  # claim code in the dashboard. Once claimed, it returns "READY" with full
+  # MQTT credentials (certs for AWS IoT Core, or user/pass for Mosquitto).
+  - id: poll_mqtt_config
+    mode: single
+    then:
+      - logger.log: "Starting MQTT config polling..."
+      - while:
+          condition:
+            lambda: 'return !id(provisioning_complete);'
+          then:
+            - http_request.get:
+                url: !lambda |-
+                  return std::string("${backend_url}/api/v1/devices/") + id(device_node_id) + "/mqtt-config"
+                         + "?token=" + id(device_provisioning_token)
+                         + "&mac=" + get_mac_address_pretty();
+                request_headers:
+                  X-Device-Key: "${device_provisioning_key}"
+                capture_response: true
+                max_response_buffer_size: 8192
+                on_error:
+                  then:
+                    - lambda: |-
+                        ESP_LOGW("provisioning", "MQTT config poll HTTP request failed (network error)");
+                on_response:
+                  then:
+                    - lambda: |-
+                        // Check if response is valid
+                        if (response == nullptr) {
+                          ESP_LOGW("provisioning", "MQTT config poll: response is null");
+                          return;
+                        }
+                        
+                        if (response->status_code != 200) {
+                          ESP_LOGW("provisioning", "MQTT config poll: HTTP %d", response->status_code);
+                          return;
+                        }
+
+                        // Response is ApiResponse<MqttConfigResponse>:
+                        // {"success":true,"data":{"status":"UNCLAIMED"|"READY",...}}
+                        std::string cfg_status = planthub::extractJsonString(body, "status");
+                        ESP_LOGI("provisioning", "MQTT config status: %s", cfg_status.c_str());
+
+                        if (cfg_status != "READY") {
+                          // Still unclaimed — continue polling
+                          return;
+                        }
+
+                        // === Device has been claimed! Extract MQTT config ===
+                        ESP_LOGI("provisioning", "Device claimed! Extracting MQTT config...");
+                        ESP_LOGI("provisioning", "Response body length: %d", body.length());
+                        // Check for actual PEM content, not just field name
+                        // (field name present with :null value is a false positive)
+                        bool has_cert = body.find("BEGIN CERTIFICATE") != std::string::npos;
+                        bool has_key = body.find("BEGIN") != std::string::npos
+                                       && body.find("KEY") != std::string::npos;
+                        ESP_LOGI("provisioning", "PEM content: cert=%s, key=%s",
+                          has_cert ? "YES" : "NO", has_key ? "YES" : "NO");
+
+                        std::string tenant_id = planthub::extractJsonString(body, "tenantId");
+                        std::string provider = planthub::extractJsonString(body, "provider");
+
+                        // Save common config to NVS
+                        planthub::nvs_write("tenant_id", tenant_id);
+                        planthub::nvs_write("node_id", id(device_node_id));
+                        planthub::nvs_write("mqtt_provider", provider);
+
+                        if (provider == "aws-iot-core") {
+                          // AWS IoT Core: save endpoint + TLS certificates
+                          std::string endpoint = planthub::extractJsonString(body, "endpoint");
+                          std::string cert = planthub::extractJsonString(body, "certificatePem");
+                          std::string key = planthub::extractJsonString(body, "privateKeyPem");
+
+                          // Validate: AWS IoT Core requires certs. If both are empty,
+                          // the response was likely truncated or certs weren't included.
+                          // Do NOT proceed — keep polling so backend can re-deliver.
+                          if (cert.empty() && key.empty()) {
+                            ESP_LOGE("provisioning", "AWS IoT Core response has no certs! "
+                              "Response may be truncated (body len=%d). Will retry...",
+                              body.length());
+                            return;  // Skip saving, keep polling
+                          }
+
+                          // Always save endpoint (backend always returns it)
+                          if (!endpoint.empty()) {
+                            planthub::nvs_write("mqtt_endpoint", endpoint);
+                          }
+
+                          // Save certs
+                          cert = planthub::unescape_json_newlines(cert);
+                          key = planthub::unescape_json_newlines(key);
+                          planthub::nvs_write("mqtt_cert", cert);
+                          planthub::nvs_write("mqtt_key", key);
+
+                          ESP_LOGI("provisioning", "AWS IoT config saved (endpoint=%s, cert=%d bytes, key=%d bytes)",
+                            endpoint.c_str(), cert.length(), key.length());
+                        } else {
+                          // Mosquitto: save broker URL + credentials
+                          std::string broker_url = planthub::extractJsonString(body, "brokerUrl");
+                          std::string username = planthub::extractJsonString(body, "username");
+                          std::string password = planthub::extractJsonString(body, "password");
+
+                          planthub::nvs_write("mqtt_broker_url", broker_url);
+                          planthub::nvs_write("mqtt_username", username);
+                          planthub::nvs_write("mqtt_password", password);
+
+                          ESP_LOGI("provisioning", "Mosquitto config saved (broker=%s)", broker_url.c_str());
+                        }
+
+                        // Commit all NVS writes to flash
+                        planthub::nvs_save();
+
+                        // Update globals
+                        id(device_tenant_id) = tenant_id;
+                        id(provisioning_complete) = true;
+                        id(provisioning_state) = "PROVISIONED";
+                        id(device_claim_code) = "";
+
+                        // Update text sensors
+                        id(provisioning_status_sensor).publish_state("PROVISIONED");
+                        id(claim_code_sensor).publish_state("");
+
+                        // Reboot to let check_nvs_config initialize MQTT from persisted NVS.
+                        // NVS reads within the same execution context after writing large certs
+                        // are unreliable, so a reboot ensures clean initialization.
+                        ESP_LOGI("provisioning", "Provisioned! Rebooting in 3s to start MQTT...");
+
+                        // Device is fully provisioned
+                        ESP_LOGI("provisioning", "Device fully provisioned");
+            # Wait before next poll
+            - delay: 10s
+      # Provisioning complete — reboot to initialize MQTT from fresh NVS
+      - delay: 3s
+      - lambda: |-
+          ESP_LOGI("provisioning", "Rebooting to start MQTT...");
+      - button.press: restart_button
+
+  # --- Soft reset (triggered by backend RESET command on unclaim) ---
+  # Clears provisioning data but keeps node_id and WiFi credentials.
+  # Device re-registers with backend and enters WAITING_CLAIM state.
+  - id: soft_reset
+    mode: single
+    then:
+      - lambda: |-
+          ESP_LOGW("provisioning", "Soft reset: stopping MQTT and clearing provisioning data...");
+
+          // Stop MQTT client
+          planthub::planthub_mqtt.stop();
+
+          // Selectively clear provisioning NVS keys (keep node_id for re-registration)
+          planthub::nvs_delete("tenant_id");
+          planthub::nvs_delete("mqtt_provider");
+          planthub::nvs_delete("mqtt_endpoint");
+          planthub::nvs_delete("mqtt_cert");
+          planthub::nvs_delete("mqtt_key");
+          planthub::nvs_delete("mqtt_broker_url");
+          planthub::nvs_delete("mqtt_username");
+          planthub::nvs_delete("mqtt_password");
+          planthub::nvs_delete("prov_token");
+          planthub::nvs_save();
+
+          // Reset runtime globals
+          id(provisioning_complete) = false;
+          id(capabilities_sent) = false;
+          id(device_tenant_id) = "";
+          id(device_claim_code) = "";
+          id(device_provisioning_token) = "";
+          id(provisioning_state) = "REGISTERING";
+
+          // Update text sensors
+          id(provisioning_status_sensor).publish_state("REGISTERING");
+          id(claim_code_sensor).publish_state("");
+
+          ESP_LOGI("provisioning", "Soft reset complete, re-registering with backend...");
+      - delay: 1s
+      - script.execute: self_register
+
+  # --- Factory reset ---
+  - id: factory_reset
+    mode: single
+    then:
+      - lambda: |-
+          ESP_LOGW("provisioning", "Factory reset requested!");
+          planthub::nvs_clear();
+          ESP_LOGI("provisioning", "NVS cleared, restarting...");
+      - delay: 500ms
+      - lambda: 'App.safe_reboot();'
+
+# Factory reset button (long press factory_reset_pin for 5 seconds)
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: ${factory_reset_pin}
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: "Factory Reset Button"
+    internal: true
+    on_press:
+      then:
+        - delay: 5s
+        - lambda: |-
+            if (id(factory_reset_button).state) {
+              ESP_LOGW("provisioning", "Factory reset triggered by button");
+              id(factory_reset).execute();
+            }
+    id: factory_reset_button
+
+button:
+  - platform: template
+    name: "Factory Reset"
+    id: factory_reset_btn
+    on_press:
+      then:
+        - script.execute: factory_reset
+
+interval:
+  - id: mqtt_watchdog
+    interval: 10s
+    then:
+      - lambda: |-
+          if (id(provisioning_complete) && wifi::global_wifi_component->is_connected()) {
+            static uint32_t failed_ticks = 0;
+            if (!planthub::planthub_mqtt.is_connected()) {
+              failed_ticks++;
+              if (failed_ticks >= 12) { // 12 * 10s = 2 minutes
+                ESP_LOGE("mqtt_watchdog", "MQTT disconnected for 2 minutes while WiFi is up! Certificate revoked by backend? Clearing NVS and rebooting...");
+                planthub::nvs_clear();
+                App.reboot();
+              }
+            } else {
+              failed_ticks = 0;
+            }
+          }
+
+
