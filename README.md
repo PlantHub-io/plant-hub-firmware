@@ -28,7 +28,7 @@ Newer versions may work but are not tested. If `pip` isn't available, see [espho
 ### 2. Clone and configure
 
 ```bash
-git clone https://github.com/<org>/plant-hub-firmware.git
+git clone https://github.com/vic7z/plant-hub-firmware.git
 cd plant-hub-firmware
 
 # Copy the secrets file. The defaults point at planthub.online and
