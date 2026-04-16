@@ -1,0 +1,14 @@
+# common/ble_provisioning.yaml
+# BLE-based WiFi provisioning using ESP32 Improv
+#
+# Users can configure WiFi credentials via:
+#   - The official "Improv WiFi" app (iOS/Android)
+#   - Any Improv-compatible app
+#   - Web Bluetooth (Chrome) at https://www.improv-wifi.com/
+#
+# BLE is used for WiFi provisioning only. Device identity
+# (tenant_id, node_id) is automatically assigned during
+# the plug-and-play provisioning flow.
+
+esp32_improv:
+  authorizer: none

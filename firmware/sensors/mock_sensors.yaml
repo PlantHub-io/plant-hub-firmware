@@ -1,0 +1,31 @@
+# sensors/mock_sensors.yaml
+# Mock sensor generator for testing frontend without physical sensors attached.
+# Generates random values within expected realistic ranges on a cron interval
+# and updates the global `sensor_values` map used by the telemetry publisher.
+
+interval:
+  - interval: ${sensor_update_interval}
+    then:
+      - lambda: |-
+          // Soil Moisture: 20-80 %
+          id(sensor_values)["soilMoisture"] = random_float() * 60.0 + 20.0;
+
+          // Temperature: 20-35 °C
+          id(sensor_values)["temperature"] = random_float() * 15.0 + 20.0;
+
+          // Humidity: 40-80 %
+          id(sensor_values)["humidity"] = random_float() * 40.0 + 40.0;
+
+          // Pressure: 1000-1020 hPa
+          id(sensor_values)["pressure"] = random_float() * 20.0 + 1000.0;
+
+          // Light Level: 400-1200 lx
+          id(sensor_values)["lightLevel"] = random_float() * 800.0 + 400.0;
+
+          // Optional: Add mock NPK or pH data if you want tests for those
+          id(sensor_values)["soilPh"] = random_float() * 1.5 + 6.0;
+          id(sensor_values)["npk_nitrogen"] = random_float() * 20.0 + 20.0;
+          id(sensor_values)["npk_phosphorus"] = random_float() * 15.0 + 15.0;
+          id(sensor_values)["npk_potassium"] = random_float() * 20.0 + 20.0;
+
+          ESP_LOGD("mock_sensors", "Updated global sensor_values map with mock data");

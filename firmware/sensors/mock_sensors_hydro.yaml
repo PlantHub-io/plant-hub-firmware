@@ -1,0 +1,24 @@
+# sensors/mock_sensors_hydro.yaml
+# Mock sensor generator for Hydroponic Indoor Garden testing.
+# Generates random values within realistic hydroponic ranges.
+
+interval:
+  - interval: ${sensor_update_interval}
+    then:
+      - lambda: |-
+          // Water pH: 5.5-7.0
+          id(sensor_values)["waterPh"] = random_float() * 1.5 + 5.5;
+
+          // Water Temperature: 18-26 °C
+          id(sensor_values)["waterTemp"] = random_float() * 8.0 + 18.0;
+
+          // Dissolved Oxygen: 5-9 mg/L
+          id(sensor_values)["dissolvedOxygen"] = random_float() * 4.0 + 5.0;
+
+          // TDS (Total Dissolved Solids): 400-1200 ppm
+          id(sensor_values)["tds"] = random_float() * 800.0 + 400.0;
+
+          // Light PAR: 100-800 µmol/m²/s
+          id(sensor_values)["lightPar"] = random_float() * 700.0 + 100.0;
+
+          ESP_LOGD("mock_sensors", "Updated global sensor_values map with hydroponic mock data");

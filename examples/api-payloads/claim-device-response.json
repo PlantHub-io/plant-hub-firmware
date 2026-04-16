@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "data": {
+    "id": "a1234567-b89c-def0-1234-567890abcdef",
+    "nodeId": "node-3f1c9b8a",
+    "name": "PlantHub C3 Node",
+    "status": "OFFLINE",
+    "tenantId": "550e8400-e29b-41d4-a716-446655440000",
+    "macAddress": "AA:BB:CC:DD:EE:FF",
+    "firmwareVersion": "1.1.0",
+    "hardwareVersion": "esp32c3-zero-v1"
+  },
+  "error": null
+}

@@ -1,4 +1,3 @@
-firmware/devices/secrets.yaml
 firmware/devices/my-device.yaml
 .esphome/
 __pycache__/

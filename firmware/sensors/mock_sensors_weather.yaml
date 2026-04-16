@@ -1,0 +1,24 @@
+# sensors/mock_sensors_weather.yaml
+# Mock sensor generator for Garden Weather Station testing.
+# Generates random values within realistic outdoor weather ranges.
+
+interval:
+  - interval: ${sensor_update_interval}
+    then:
+      - lambda: |-
+          // Wind Speed: 0-60 km/h
+          id(sensor_values)["windSpeed"] = random_float() * 60.0;
+
+          // Rainfall: 0-50 mm
+          id(sensor_values)["rainfall"] = random_float() * 50.0;
+
+          // UV Index: 0-11
+          id(sensor_values)["uvIndex"] = random_float() * 11.0;
+
+          // Air Temperature: 5-42 °C
+          id(sensor_values)["airTemp"] = random_float() * 37.0 + 5.0;
+
+          // Ambient Light: 100-80000 lx
+          id(sensor_values)["ambientLight"] = random_float() * 79900.0 + 100.0;
+
+          ESP_LOGD("mock_sensors", "Updated global sensor_values map with weather mock data");

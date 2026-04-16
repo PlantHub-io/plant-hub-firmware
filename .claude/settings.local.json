@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.\\(h|cpp|yaml\\)$\")",
+      "Bash(aws ssm *)",
+      "Bash(python -c 'import json; json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\''\\)\\); print\\('\\\\''OK'\\\\''\\)')",
+      "Bash(pip show *)",
+      "Bash(esphome version *)",
+      "Bash(esphome compile *)",
+      "Bash(C:/Users/pooja/IdeaProjects/plant-hub-hardware/.venv-esphome/Scripts/python.exe *)",
+      "Bash(\"C:/Users/pooja/IdeaProjects/plant-hub-hardware/.venv-esphome/Scripts/esphome.exe\" compile *)"
+    ]
+  }
+}
