@@ -1,10 +1,23 @@
+# Device-specific configs (user creates from .example)
 firmware/devices/my-device.yaml
+firmware/devices/secrets.yaml
+
+# ESPHome build artifacts
 .esphome/
+
+# Python
 __pycache__/
 *.pyc
 .venv*/
+
+# IDEs
 .idea/
 .vscode/
+
+# Editor swap files
 *.swp
 *.swo
 *~
+
+# Claude Code local settings
+.claude/
