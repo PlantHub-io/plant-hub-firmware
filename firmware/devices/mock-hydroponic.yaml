@@ -1,0 +1,131 @@
+# devices/mock-hydroponic.yaml
+#
+# PlantHub Mock Device — Hydroponic Indoor Garden (ESP32-S3 Zero)
+#
+# No physical sensors required! This config uses mock sensor generators
+# that produce realistic random data, letting you test the full PlantHub
+# pipeline (provisioning, MQTT, dashboard, AI agent) without any hardware
+# beyond the ESP32 board itself.
+#
+# Sensors (mock): Water pH, Water Temperature, Dissolved Oxygen, TDS, Light PAR
+# Actuators:      Water Pump (GPIO3 relay), Ventilation Fan (GPIO4 relay)
+#
+# ============================================
+# WIRING (optional — only if you want actuators to physically work)
+# ============================================
+#
+#   ESP32-S3 Zero     Component
+#   -------------     ---------
+#   GPIO3          →  Water Pump Relay IN
+#   GPIO4          →  Ventilation Fan Relay IN
+#   3.3V           →  Sensor VCC
+#   5V             →  Relay module VCC
+#   GND            →  Common GND
+#
+# Without relays wired, the device still registers, streams mock sensor
+# data, and accepts actuator commands (they just don't do anything physical).
+#
+# ============================================
+# FLASH
+# ============================================
+#
+#   esphome run firmware/devices/mock-hydroponic.yaml
+#
+# Then follow the provisioning flow in the top-level README.md.
+#
+
+substitutions:
+  # Device identity (static)
+  device_id: "planthub-s3-002"
+  device_name: "PlantHub Hydroponic"
+  hardware_version: "esp32s3-zero-v1"
+  firmware_version: "1.1.0"
+
+  # Backend configuration (from secrets.yaml)
+  backend_url: !secret backend_url
+  device_provisioning_key: !secret device_provisioning_key
+
+  # Pin mappings — ESP32-S3 Zero
+  pump_pin: GPIO3
+  fan_pin: GPIO4
+  neopixel_pin: GPIO21
+  factory_reset_pin: GPIO2
+
+  # Timing
+  sensor_update_interval: "30s"
+  telemetry_interval: "60s"
+  pump_max_duration: "120"
+
+  # Capabilities JSON for this device
+  capabilities_sensors: |-
+    msg += "{\"sensorKey\":\"waterPh\",\"sensorType\":\"ph_probe\",\"unit\":\"pH\",\"displayName\":\"Water pH\",\"minValue\":0,\"maxValue\":14,\"precision\":0.01},";
+    msg += "{\"sensorKey\":\"waterTemp\",\"sensorType\":\"ds18b20\",\"unit\":\"\u00b0C\",\"displayName\":\"Water Temperature\",\"minValue\":0,\"maxValue\":50,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"dissolvedOxygen\",\"sensorType\":\"do_probe\",\"unit\":\"mg/L\",\"displayName\":\"Dissolved Oxygen\",\"minValue\":0,\"maxValue\":20,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"tds\",\"sensorType\":\"tds_meter\",\"unit\":\"ppm\",\"displayName\":\"TDS\",\"minValue\":0,\"maxValue\":2000,\"precision\":1},";
+    msg += "{\"sensorKey\":\"lightPar\",\"sensorType\":\"par_sensor\",\"unit\":\"\u00b5mol/m\u00b2/s\",\"displayName\":\"Light PAR\",\"minValue\":0,\"maxValue\":2000,\"precision\":1}";
+
+  capabilities_actuators: |-
+    msg += "{\"actuatorKey\":\"waterPump\",\"actuatorType\":\"relay\",\"displayName\":\"Water Pump\",\"supportedCommands\":[\"ON\",\"OFF\"],\"controlType\":\"BINARY\",\"durationSupported\":true,\"maxDurationSeconds\":${pump_max_duration}},";
+    msg += "{\"actuatorKey\":\"ventFan\",\"actuatorType\":\"relay\",\"displayName\":\"Ventilation Fan\",\"supportedCommands\":[\"ON\",\"OFF\"],\"controlType\":\"BINARY\",\"durationSupported\":false}";
+
+  # Command router for this device's actuators
+  command_router: |-
+    if (actuator == "waterPump") {
+      if (durationSeconds > 0) {
+        int clamped = durationSeconds > ${pump_max_duration} ? ${pump_max_duration} : durationSeconds;
+        ESP_LOGI("command", "[waterPump] TIMED ON for %d seconds (requested=%d, max=${pump_max_duration})", clamped, durationSeconds);
+        id(pump_timed).execute(clamped);
+      } else if (action == "ON") {
+        ESP_LOGI("command", "[waterPump] ON (no duration, auto-off in ${pump_max_duration}s)");
+        id(water_pump).turn_on();
+      } else if (action == "OFF") {
+        ESP_LOGI("command", "[waterPump] OFF");
+        id(water_pump).turn_off();
+      } else {
+        ESP_LOGW("command", "[waterPump] Unknown action: %s", action.c_str());
+      }
+    } else if (actuator == "ventFan") {
+      if (action == "ON") {
+        ESP_LOGI("command", "[ventFan] ON");
+        id(vent_fan).turn_on();
+      } else if (action == "OFF") {
+        ESP_LOGI("command", "[ventFan] OFF");
+        id(vent_fan).turn_off();
+      } else {
+        ESP_LOGW("command", "[ventFan] Unknown action: %s", action.c_str());
+      }
+    } else {
+      ESP_LOGW("command", "Unknown actuator: %s (action=%s)", actuator.c_str(), action.c_str());
+    }
+
+# Board
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_ESP_MQTT_ENABLED: "y"
+      CONFIG_MQTT_TRANSPORT_SSL: "y"
+      CONFIG_MQTT_TRANSPORT_WEBSOCKET: "n"
+      CONFIG_MQTT_TRANSPORT_WEBSOCKET_SECURE: "n"
+    advanced:
+      include_builtin_idf_components:
+        - nvs_flash
+        - mqtt
+  partitions: ../partitions.csv
+
+# Include all common packages
+packages:
+  base: !include ../common/base.yaml
+  wifi: !include ../common/wifi.yaml
+  ble: !include ../common/ble_provisioning.yaml
+  provisioning: !include ../common/provisioning.yaml
+  globals: !include ../common/globals.yaml
+  status: !include ../common/status.yaml
+  led: !include ../common/led_status_neopixel.yaml
+
+  # Mock sensors for testing without hardware
+  mock: !include ../sensors/mock_sensors_hydro.yaml
+  pump: !include ../actuators/water_pump.yaml
+  fan: !include ../actuators/vent_fan.yaml

@@ -1,0 +1,70 @@
+{
+  "firmwareVersion": "1.1.0",
+  "hardwareVersion": "esp32c3-zero-v1",
+  "sensors": [
+    {
+      "sensorKey": "soilMoisture",
+      "sensorType": "capacitive_adc",
+      "unit": "%",
+      "displayName": "Soil Moisture",
+      "minValue": 0,
+      "maxValue": 100,
+      "precision": 0.1
+    },
+    {
+      "sensorKey": "temperature",
+      "sensorType": "bme280",
+      "unit": "\u00b0C",
+      "displayName": "Temperature",
+      "minValue": -40,
+      "maxValue": 85,
+      "precision": 0.1
+    },
+    {
+      "sensorKey": "humidity",
+      "sensorType": "bme280",
+      "unit": "%",
+      "displayName": "Humidity",
+      "minValue": 0,
+      "maxValue": 100,
+      "precision": 0.1
+    },
+    {
+      "sensorKey": "pressure",
+      "sensorType": "bme280",
+      "unit": "hPa",
+      "displayName": "Pressure",
+      "minValue": 300,
+      "maxValue": 1100,
+      "precision": 0.01
+    },
+    {
+      "sensorKey": "lightLevel",
+      "sensorType": "bh1750",
+      "unit": "lx",
+      "displayName": "Light Level",
+      "minValue": 0,
+      "maxValue": 65535,
+      "precision": 1
+    }
+  ],
+  "actuators": [
+    {
+      "actuatorKey": "waterPump",
+      "actuatorType": "relay",
+      "displayName": "Water Pump",
+      "supportedCommands": ["ON", "OFF"],
+      "controlType": "BINARY",
+      "durationSupported": true,
+      "maxDurationSeconds": 120
+    },
+    {
+      "actuatorKey": "ventFan",
+      "actuatorType": "relay",
+      "displayName": "Ventilation Fan",
+      "supportedCommands": ["ON", "OFF"],
+      "controlType": "BINARY",
+      "durationSupported": false
+    }
+  ]
+}

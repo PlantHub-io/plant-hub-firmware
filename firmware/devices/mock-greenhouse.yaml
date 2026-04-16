@@ -1,0 +1,131 @@
+# devices/mock-greenhouse.yaml
+#
+# PlantHub Mock Device — Greenhouse Controller (ESP32-C3 Zero)
+#
+# No physical sensors required! This config uses mock sensor generators
+# that produce realistic random data, letting you test the full PlantHub
+# pipeline (provisioning, MQTT, dashboard, AI agent) without any hardware
+# beyond the ESP32 board itself.
+#
+# Sensors (mock): CO2 Level, Water Tank Level, Leaf Wetness, Soil EC, Soil Temp
+# Actuators:      Heater (GPIO3 relay), Shade Blind (GPIO4 relay)
+#
+# ============================================
+# WIRING (optional — only if you want actuators to physically work)
+# ============================================
+#
+#   ESP32-C3 Zero     Component
+#   -------------     ---------
+#   GPIO3          →  Heater Relay IN
+#   GPIO4          →  Shade Blind Relay IN
+#   3.3V           →  Sensor VCC
+#   5V             →  Relay module VCC
+#   GND            →  Common GND
+#
+# Without relays wired, the device still registers, streams mock sensor
+# data, and accepts actuator commands (they just don't do anything physical).
+#
+# ============================================
+# FLASH
+# ============================================
+#
+#   esphome run firmware/devices/mock-greenhouse.yaml
+#
+# Then follow the provisioning flow in the top-level README.md.
+#
+
+substitutions:
+  # Device identity (static)
+  device_id: "planthub-c3-003"
+  device_name: "PlantHub Greenhouse"
+  hardware_version: "esp32c3-zero-v1"
+  firmware_version: "1.1.0"
+
+  # Backend configuration (from secrets.yaml)
+  backend_url: !secret backend_url
+  device_provisioning_key: !secret device_provisioning_key
+
+  # Pin mappings — ESP32-C3 Zero / SuperMini
+  heater_pin: GPIO3
+  blind_pin: GPIO4
+  status_led_pin: GPIO8
+  factory_reset_pin: GPIO9
+
+  # Timing
+  sensor_update_interval: "30s"
+  telemetry_interval: "60s"
+  heater_max_duration: "1800"
+
+  # Capabilities JSON for this device
+  capabilities_sensors: |-
+    msg += "{\"sensorKey\":\"co2Level\",\"sensorType\":\"ndir_co2\",\"unit\":\"ppm\",\"displayName\":\"CO\u2082 Level\",\"minValue\":0,\"maxValue\":5000,\"precision\":1},";
+    msg += "{\"sensorKey\":\"waterLevel\",\"sensorType\":\"ultrasonic\",\"unit\":\"%\",\"displayName\":\"Water Tank Level\",\"minValue\":0,\"maxValue\":100,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"leafWetness\",\"sensorType\":\"resistive\",\"unit\":\"%\",\"displayName\":\"Leaf Wetness\",\"minValue\":0,\"maxValue\":100,\"precision\":0.1},";
+    msg += "{\"sensorKey\":\"soilEC\",\"sensorType\":\"ec_probe\",\"unit\":\"mS/cm\",\"displayName\":\"Soil EC\",\"minValue\":0,\"maxValue\":10,\"precision\":0.01},";
+    msg += "{\"sensorKey\":\"soilTemp\",\"sensorType\":\"ds18b20\",\"unit\":\"\u00b0C\",\"displayName\":\"Soil Temperature\",\"minValue\":-10,\"maxValue\":50,\"precision\":0.1}";
+
+  capabilities_actuators: |-
+    msg += "{\"actuatorKey\":\"heater\",\"actuatorType\":\"relay\",\"displayName\":\"Heater\",\"supportedCommands\":[\"ON\",\"OFF\"],\"controlType\":\"BINARY\",\"durationSupported\":true,\"maxDurationSeconds\":${heater_max_duration}},";
+    msg += "{\"actuatorKey\":\"shadeBlind\",\"actuatorType\":\"relay\",\"displayName\":\"Shade Blind\",\"supportedCommands\":[\"ON\",\"OFF\"],\"controlType\":\"BINARY\",\"durationSupported\":false}";
+
+  # Command router for this device's actuators
+  command_router: |-
+    if (actuator == "heater") {
+      if (durationSeconds > 0) {
+        int clamped = durationSeconds > ${heater_max_duration} ? ${heater_max_duration} : durationSeconds;
+        ESP_LOGI("command", "[heater] TIMED ON for %d seconds (requested=%d, max=${heater_max_duration})", clamped, durationSeconds);
+        id(heater_timed).execute(clamped);
+      } else if (action == "ON") {
+        ESP_LOGI("command", "[heater] ON (no duration, auto-off in ${heater_max_duration}s)");
+        id(heater).turn_on();
+      } else if (action == "OFF") {
+        ESP_LOGI("command", "[heater] OFF");
+        id(heater).turn_off();
+      } else {
+        ESP_LOGW("command", "[heater] Unknown action: %s", action.c_str());
+      }
+    } else if (actuator == "shadeBlind") {
+      if (action == "ON") {
+        ESP_LOGI("command", "[shadeBlind] ON");
+        id(shade_blind).turn_on();
+      } else if (action == "OFF") {
+        ESP_LOGI("command", "[shadeBlind] OFF");
+        id(shade_blind).turn_off();
+      } else {
+        ESP_LOGW("command", "[shadeBlind] Unknown action: %s", action.c_str());
+      }
+    } else {
+      ESP_LOGW("command", "Unknown actuator: %s (action=%s)", actuator.c_str(), action.c_str());
+    }
+
+# Board
+esp32:
+  board: esp32-c3-devkitm-1
+  partitions: ../partitions.csv
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_ESP_MQTT_ENABLED: "y"
+      CONFIG_MQTT_TRANSPORT_SSL: "y"
+      CONFIG_MQTT_TRANSPORT_WEBSOCKET: "n"
+      CONFIG_MQTT_TRANSPORT_WEBSOCKET_SECURE: "n"
+    advanced:
+      include_builtin_idf_components:
+        - nvs_flash
+        - mqtt
+
+# Include all common packages
+packages:
+  base: !include ../common/base.yaml
+  wifi: !include ../common/wifi.yaml
+  ble: !include ../common/ble_provisioning.yaml
+  provisioning: !include ../common/provisioning.yaml
+  globals: !include ../common/globals.yaml
+  status: !include ../common/status.yaml
+  led: !include ../common/led_status.yaml
+
+  # Mock sensors for testing without hardware
+  mock: !include ../sensors/mock_sensors_greenhouse.yaml
+  heater_actuator: !include ../actuators/heater.yaml
+  blind: !include ../actuators/shade_blind.yaml

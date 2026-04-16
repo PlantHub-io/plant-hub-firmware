@@ -1,0 +1,18 @@
+{
+  "success": true,
+  "data": {
+    "status": "READY",
+    "tenantId": "550e8400-e29b-41d4-a716-446655440000",
+    "nodeId": "node-3f1c9b8a",
+    "provider": "mosquitto",
+    "port": 1883,
+    "brokerUrl": "tcp://localhost:1883",
+    "username": "planthub-device",
+    "password": "device-mqtt-pass",
+    "sensorTopic": "550e8400-e29b-41d4-a716-446655440000/node-3f1c9b8a/sensors",
+    "actuatorTopic": "550e8400-e29b-41d4-a716-446655440000/node-3f1c9b8a/actuators",
+    "statusTopic": "550e8400-e29b-41d4-a716-446655440000/node-3f1c9b8a/status",
+    "capabilitiesTopic": "550e8400-e29b-41d4-a716-446655440000/node-3f1c9b8a/capabilities"
+  },
+  "error": null
+}

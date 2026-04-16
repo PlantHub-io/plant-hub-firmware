@@ -1,0 +1,19 @@
+{
+  "success": true,
+  "data": {
+    "status": "READY",
+    "tenantId": "550e8400-e29b-41d4-a716-446655440000",
+    "nodeId": "node-3f1c9b8a",
+    "provider": "aws-iot-core",
+    "endpoint": "xxxxxx-ats.iot.ap-south-1.amazonaws.com",
+    "port": 8883,
+    "certificatePem": "-----BEGIN CERTIFICATE-----\nMIIDWTCCAkGgAwIBAgIU...\n-----END CERTIFICATE-----",
+    "privateKeyPem": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----",
+    "rootCaUrl": "https://www.amazontrust.com/repository/AmazonRootCA1.pem",
+    "sensorTopic": "550e8400-e29b-41d4-a716-446655440000/node-3f1c9b8a/sensors",
+    "actuatorTopic": "550e8400-e29b-41d4-a716-446655440000/node-3f1c9b8a/actuators",
+    "statusTopic": "550e8400-e29b-41d4-a716-446655440000/node-3f1c9b8a/status",
+    "capabilitiesTopic": "550e8400-e29b-41d4-a716-446655440000/node-3f1c9b8a/capabilities"
+  },
+  "error": null
+}

@@ -1,0 +1,24 @@
+# sensors/mock_sensors_greenhouse.yaml
+# Mock sensor generator for Greenhouse Controller testing.
+# Generates random values within realistic greenhouse ranges.
+
+interval:
+  - interval: ${sensor_update_interval}
+    then:
+      - lambda: |-
+          // CO2 Level: 300-2000 ppm
+          id(sensor_values)["co2Level"] = random_float() * 1700.0 + 300.0;
+
+          // Water Tank Level: 0-100 %
+          id(sensor_values)["waterLevel"] = random_float() * 100.0;
+
+          // Leaf Wetness: 0-100 %
+          id(sensor_values)["leafWetness"] = random_float() * 100.0;
+
+          // Soil EC: 0.5-4.0 mS/cm
+          id(sensor_values)["soilEC"] = random_float() * 3.5 + 0.5;
+
+          // Soil Temperature: 10-40 °C
+          id(sensor_values)["soilTemp"] = random_float() * 30.0 + 10.0;
+
+          ESP_LOGD("mock_sensors", "Updated global sensor_values map with greenhouse mock data");

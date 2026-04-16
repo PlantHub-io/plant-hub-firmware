@@ -1,0 +1,6 @@
+{
+  "macAddress": "AA:BB:CC:DD:EE:FF",
+  "firmwareVersion": "1.1.0",
+  "hardwareVersion": "esp32c3-zero-v1",
+  "deviceName": "PlantHub C3 Node"
+}

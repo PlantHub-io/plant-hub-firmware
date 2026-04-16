@@ -1,0 +1,16 @@
+{
+  "nodeId": "node-3f1c9b8a",
+  "commands": [
+    {
+      "actuator": "waterPump",
+      "action": "ON",
+      "parameters": {
+        "durationSeconds": 30
+      }
+    },
+    {
+      "actuator": "ventFan",
+      "action": "OFF"
+    }
+  ]
+}
