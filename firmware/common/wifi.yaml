@@ -42,28 +42,12 @@ wifi:
                 id(provisioning_status_sensor).publish_state("REGISTERING");
                 ESP_LOGI("wifi-dbg", "State set to REGISTERING, re-enabling AP...");
 
-                // Re-enable AP — WiFi component disabled it when STA connected
-                struct wifi_ap_hack : public wifi::WiFiComponent {
-                  void enable_ap() {
-                    this->ap_setup_ = false;
-                    this->setup_ap_config_();
-                  }
-                };
-                ((wifi_ap_hack*)wifi::global_wifi_component)->enable_ap();
-
-                // Re-enable captive portal — WiFi component called end() when STA
-                // connected (wifi_component.cpp:1489). We restart it so Android
-                // keeps detecting a captive portal and stays connected to the AP.
-                // This is safe: on_connect fires from loop() AFTER the WiFi
-                // component's state transitions are complete (CONNECTED state),
-                // so it won't call end() again.
-                #ifdef USE_CAPTIVE_PORTAL
-                if (captive_portal::global_captive_portal != nullptr) {
-                  captive_portal::global_captive_portal->start();
-                  ESP_LOGI("wifi-dbg", "Captive portal restarted (active_=%d)",
-                           captive_portal::global_captive_portal->is_active());
-                }
-                #endif
+                // Re-enable AP + captive portal. The WiFi component tears down
+                // both when STA connects; we bring them back up so Android keeps
+                // the captive-portal detection alive and the user can still see
+                // the claim code. Helper lives in common/wifi_ap_access.h
+                // because WiFiComponent is `final` in ESPHome 2026.x.
+                planthub::reenable_wifi_ap();
             - delay: 2s
             - script.execute: self_register
 

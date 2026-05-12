@@ -16,6 +16,7 @@ esphome:
     - ../common/planthub_mqtt/planthub_mqtt.cpp
     - ../common/provisioning_page.h
     - ../common/provisioning_handler.h
+    - ../common/wifi_ap_access.h
   platformio_options:
     extra_scripts:
       - pre:../../../../common/build_captive_portal.py
