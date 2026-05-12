@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "variants": [
+    {
+      "id": "c3zero-soil-bme-bh1750-pump-fan",
+      "displayName": "ESP32-C3 Zero · Soil + BME280 + BH1750 + Pump + Fan",
+      "summary": "Reference kit: capacitive soil moisture, BME280 (temp/humidity/pressure), BH1750 (light), water pump relay, vent fan relay.",
+      "yamlSource": "example-c3zero.yaml",
+      "buildId": "planthub-c3-001",
+      "chipFamily": "ESP32-C3",
+      "board": "esp32-c3-devkitm-1",
+      "manifestPath": "c3zero-soil-bme-bh1750-pump-fan/manifest.json",
+      "wiring": [
+        { "pin": "GPIO0",        "component": "Soil moisture AOUT" },
+        { "pin": "GPIO6 (SDA)",  "component": "BME280 + BH1750 SDA" },
+        { "pin": "GPIO7 (SCL)",  "component": "BME280 + BH1750 SCL" },
+        { "pin": "GPIO3",        "component": "Water pump relay IN" },
+        { "pin": "GPIO4",        "component": "Vent fan relay IN" },
+        { "pin": "GPIO8",        "component": "Status LED" },
+        { "pin": "GPIO9",        "component": "Factory-reset button (to GND)" },
+        { "pin": "3.3V",         "component": "Sensor VCC (soil, BME280, BH1750)" },
+        { "pin": "5V",           "component": "Relay module VCC" },
+        { "pin": "GND",          "component": "Common GND" }
+      ],
+      "sensors":   ["soilMoisture", "temperature", "humidity", "pressure", "lightLevel"],
+      "actuators": ["waterPump", "ventFan"]
+    },
+    {
+      "id": "s3zero-soil-bme-bh1750-pump-fan",
+      "displayName": "ESP32-S3 Zero · Soil + BME280 + BH1750 + Pump + Fan",
+      "summary": "S3 variant of the reference kit. Same sensors and actuators, different pinout.",
+      "yamlSource": "example-s3zero.yaml",
+      "buildId": "planthub-s3-001",
+      "chipFamily": "ESP32-S3",
+      "board": "esp32-s3-devkitc-1",
+      "manifestPath": "s3zero-soil-bme-bh1750-pump-fan/manifest.json",
+      "wiring": [
+        { "pin": "GPIO1",        "component": "Soil moisture AOUT" },
+        { "pin": "GPIO8 (SDA)",  "component": "BME280 + BH1750 SDA" },
+        { "pin": "GPIO9 (SCL)",  "component": "BME280 + BH1750 SCL" },
+        { "pin": "GPIO3",        "component": "Water pump relay IN" },
+        { "pin": "GPIO4",        "component": "Vent fan relay IN" },
+        { "pin": "GPIO48",       "component": "Status LED (on-board RGB)" },
+        { "pin": "GPIO2",        "component": "Factory-reset button (to GND)" },
+        { "pin": "3.3V",         "component": "Sensor VCC" },
+        { "pin": "5V",           "component": "Relay module VCC" },
+        { "pin": "GND",          "component": "Common GND" }
+      ],
+      "sensors":   ["soilMoisture", "temperature", "humidity", "pressure", "lightLevel"],
+      "actuators": ["waterPump", "ventFan"]
+    }
+  ]
+}

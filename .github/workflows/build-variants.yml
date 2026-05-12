@@ -1,0 +1,180 @@
+name: Build firmware variants
+
+# Compiles each device YAML referenced by firmware/devices/variants.json, packages
+# the resulting binaries with an ESP Web Tools manifest, and publishes them to
+# gh-pages so the PlantHub web flasher at /app/flash can install them over
+# WebSerial. See plan: how-hard-is-impliment-sequential-teacup.md (Phase 1).
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to gh-pages (otherwise upload artifacts only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: build-variants-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - id: c3zero-soil-bme-bh1750-pump-fan
+            yaml: example-c3zero.yaml
+            build_dir: planthub-c3-001
+            chip_family: ESP32-C3
+            display_name: PlantHub C3 Zero
+          - id: s3zero-soil-bme-bh1750-pump-fan
+            yaml: example-s3zero.yaml
+            build_dir: planthub-s3-001
+            chip_family: ESP32-S3
+            display_name: PlantHub S3 Zero
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install ESPHome
+        run: |
+          python -m pip install --upgrade pip
+          pip install 'esphome==2026.4.0'
+          esphome version
+
+      - name: Resolve firmware version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            short="$(git rev-parse --short HEAD)"
+            echo "value=0.0.0+${short}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compile ${{ matrix.variant.yaml }}
+        run: |
+          esphome compile "firmware/devices/${{ matrix.variant.yaml }}"
+
+      - name: Stage artifacts
+        env:
+          VARIANT_ID:    ${{ matrix.variant.id }}
+          BUILD_DIR:     ${{ matrix.variant.build_dir }}
+          CHIP_FAMILY:   ${{ matrix.variant.chip_family }}
+          DISPLAY_NAME:  ${{ matrix.variant.display_name }}
+          VERSION:       ${{ steps.ver.outputs.value }}
+        run: |
+          set -euo pipefail
+          out_dir="dist/${VARIANT_ID}"
+          mkdir -p "${out_dir}"
+
+          # ESPHome's pioenvs build directory holds the compiled binaries.
+          src_dir="firmware/devices/.esphome/build/${BUILD_DIR}/.pioenvs/${BUILD_DIR}"
+
+          # The factory image bundles bootloader + partitions + ota_data + app
+          # into one blob flashed at offset 0. Simpler and more reliable than
+          # flashing four parts at chip-specific offsets.
+          if [[ ! -f "${src_dir}/firmware.factory.bin" ]]; then
+            echo "::error::firmware.factory.bin not found in ${src_dir}"
+            ls -la "${src_dir}" || true
+            exit 1
+          fi
+
+          cp "${src_dir}/firmware.factory.bin" "${out_dir}/firmware.factory.bin"
+
+          # Generate the ESP Web Tools manifest.
+          cat > "${out_dir}/manifest.json" <<EOF
+          {
+            "name": "${DISPLAY_NAME}",
+            "version": "${VERSION}",
+            "new_install_prompt_erase": true,
+            "builds": [
+              {
+                "chipFamily": "${CHIP_FAMILY}",
+                "parts": [
+                  { "path": "firmware.factory.bin", "offset": 0 }
+                ]
+              }
+            ]
+          }
+          EOF
+
+          echo "Built ${VARIANT_ID}:"
+          ls -la "${out_dir}"
+
+      - name: Upload variant artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: variant-${{ matrix.variant.id }}
+          path: dist/${{ matrix.variant.id }}
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all variant artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: variant-*
+
+      - name: Flatten artifact tree
+        run: |
+          set -euo pipefail
+          # download-artifact gives us dist/variant-<id>/...; flatten to dist/<id>/...
+          for d in dist/variant-*; do
+            [ -d "$d" ] || continue
+            id="${d#dist/variant-}"
+            mkdir -p "dist/${id}"
+            mv "$d"/* "dist/${id}/"
+            rmdir "$d"
+          done
+
+          # Copy the kit catalog next to the variants so the frontend can fetch
+          # one URL and discover every variant.
+          cp firmware/devices/variants.json dist/variants.json
+          ls -R dist
+
+      - name: Add Pages metadata
+        run: |
+          # CDN-served JSON should be public; add a simple index for discoverability.
+          cat > dist/index.html <<'HTML'
+          <!doctype html>
+          <html><head><meta charset="utf-8"><title>PlantHub firmware variants</title></head>
+          <body>
+            <h1>PlantHub firmware variants</h1>
+            <p>Consumed by the PlantHub web flasher. See
+              <a href="variants.json">variants.json</a> for the catalog.</p>
+          </body></html>
+          HTML
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          keep_files: false
+          force_orphan: true
