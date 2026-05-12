@@ -44,8 +44,10 @@ template struct Inject<SetupApConfigTag, &esphome::wifi::WiFiComponent::setup_ap
 inline void reenable_wifi_ap() {
   auto *c = esphome::wifi::global_wifi_component;
   if (c == nullptr) return;
-  c->*wifi_access::get(wifi_access::ApSetupTag{}) = false;
-  (c->*wifi_access::get(wifi_access::SetupApConfigTag{}))();
+  // Unqualified call — `get` is a hidden friend of the tag types, only
+  // findable via ADL on the tag argument (which lives in wifi_access::).
+  c->*get(wifi_access::ApSetupTag{}) = false;
+  (c->*get(wifi_access::SetupApConfigTag{}))();
 #ifdef USE_CAPTIVE_PORTAL
   if (esphome::captive_portal::global_captive_portal != nullptr) {
     esphome::captive_portal::global_captive_portal->start();
