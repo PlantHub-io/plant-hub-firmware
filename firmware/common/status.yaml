@@ -119,6 +119,11 @@ script:
             msg, 1, false
           );
           ESP_LOGD("telemetry", "Published: %s", msg.c_str());
+      # After each successful publish, consider going to sleep. The script
+      # gates on shadow config, maintenance mode, and any pending offline
+      # work — see common/deep_sleep.yaml. No-op on devices that don't load
+      # the deep_sleep package.
+      - script.execute: maybe_sleep
 
   # --- Handle Actuator Commands from Backend ---
   # Backend sends: {"nodeId":"...","commands":[{"actuator":"waterPump","action":"ON","parameters":{"durationSeconds":30}}]}

@@ -121,6 +121,9 @@ packages:
   globals:      !include ../common/globals.yaml
   status:       !include ../common/status.yaml
   led:          !include ../common/led_status.yaml
+  rule_engine:  !include ../common/rule_engine.yaml
+  shadow:       !include ../common/shadow.yaml
+  deep_sleep:   !include ../common/deep_sleep.yaml
 
   soil:   !include ../sensors/soil_moisture_adc.yaml
   bme280: !include ../sensors/bme280.yaml

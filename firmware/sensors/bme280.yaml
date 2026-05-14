@@ -30,7 +30,10 @@ sensor:
       oversampling: 2x
       on_value:
         then:
-          - lambda: 'id(sensor_values)["temperature"] = x;'
+          - lambda: |-
+              if (std::isnan(x)) return;
+              id(sensor_values)["temperature"] = x;
+              id(evaluate_rules).execute(std::string("temperature"), x);
 
     humidity:
       name: "Humidity"
@@ -38,7 +41,10 @@ sensor:
       oversampling: 2x
       on_value:
         then:
-          - lambda: 'id(sensor_values)["humidity"] = x;'
+          - lambda: |-
+              if (std::isnan(x)) return;
+              id(sensor_values)["humidity"] = x;
+              id(evaluate_rules).execute(std::string("humidity"), x);
 
     pressure:
       name: "Pressure"
@@ -46,4 +52,7 @@ sensor:
       oversampling: 2x
       on_value:
         then:
-          - lambda: 'id(sensor_values)["pressure"] = x;'
+          - lambda: |-
+              if (std::isnan(x)) return;
+              id(sensor_values)["pressure"] = x;
+              id(evaluate_rules).execute(std::string("pressure"), x);

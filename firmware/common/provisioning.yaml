@@ -110,9 +110,19 @@ script:
                   id(handle_command).execute(payload);
                 } else if (type == "system") {
                   id(handle_system_command).execute(payload);
+                } else if (type == "maintenance") {
+                  id(handle_maintenance).execute(payload);
                 }
               });
               ESP_LOGI("provisioning", "MQTT started and subscribed");
+              // Wire AWS IoT Device Shadow (named shadow "config") for offline rule sync.
+              // Mosquitto / dev profile no-ops inside the script.
+              id(register_shadow_callback).execute();
+              id(restore_rules_json_from_nvs).execute();
+              // Drain any rule firings buffered while offline / asleep. The
+              // script defers itself if MQTT hasn't actually finished its
+              // CONNECT handshake yet; the post-connect interval picks them up.
+              id(drain_rule_log).execute();
             } else {
               // MQTT setup failed (e.g. missing endpoint in NVS).
               // Clear stale provisioning data and re-enter the self-register flow

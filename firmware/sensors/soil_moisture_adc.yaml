@@ -42,4 +42,5 @@ sensor:
       if (pct > 100) pct = 100;
 
       id(sensor_values)["soilMoisture"] = pct;
+      id(evaluate_rules).execute(std::string("soilMoisture"), pct);
       return pct;

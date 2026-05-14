@@ -1,0 +1,276 @@
+# common/shadow.yaml
+# AWS IoT Device Shadow client (named shadow "config").
+#
+# Subscribes to:
+#   $aws/things/{nodeId}/shadow/name/config/get/accepted
+#   $aws/things/{nodeId}/shadow/name/config/update/delta
+#
+# Publishes to:
+#   $aws/things/{nodeId}/shadow/name/config/get          (empty {})
+#   $aws/things/{nodeId}/shadow/name/config/update       (reported state)
+#
+# On Mosquitto/dev profiles every script in this file is a no-op — the
+# planthub_mqtt layer simply never subscribes to shadow topics, so the
+# shadow_callback never fires. This keeps dev parity simple: same firmware
+# binary, different runtime behaviour based on `mqtt_provider` in NVS.
+
+globals:
+  # Last `state.desired.v` we observed from the broker. Echoed back in
+  # reported.v so the backend can detect drift via the shadow document
+  # itself instead of a server-side version table.
+  - id: shadow_desired_version
+    type: int
+    restore_value: yes
+    initial_value: "0"
+
+  # Hash of the latest applied desired state (matches `rulesHash` from the
+  # backend). Persisted so a reboot doesn't churn through a re-publish if
+  # nothing has actually changed.
+  - id: shadow_desired_hash
+    type: std::string
+    restore_value: yes
+    max_restore_data_length: 32
+
+  # Set true once the first shadow message is received this boot. The
+  # request_shadow_get script gives up retrying after this flips.
+  - id: shadow_got_initial
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  # Pending sleep config from desired state. shadow.yaml only writes to NVS
+  # and updates these globals — the deep-sleep loop in Phase 4 will read
+  # them. Phase 2 ignores them, which is intentional.
+  - id: shadow_sleep_enabled
+    type: bool
+    restore_value: yes
+    initial_value: "false"
+
+  - id: shadow_sleep_wake_interval_sec
+    type: int
+    restore_value: yes
+    initial_value: "0"
+
+text_sensor:
+  - platform: template
+    name: "Shadow Version"
+    id: shadow_version_sensor
+    lambda: |-
+      return std::to_string(id(shadow_desired_version));
+    update_interval: never
+
+  - platform: template
+    name: "Shadow Hash"
+    id: shadow_hash_sensor
+    lambda: |-
+      return id(shadow_desired_hash);
+    update_interval: never
+
+script:
+  # --- Register the shadow callback with planthub_mqtt --------------------
+  # Called from provisioning.yaml after planthub_mqtt.start() so the C++
+  # side knows which ESPHome script to invoke when shadow traffic lands.
+  - id: register_shadow_callback
+    mode: single
+    then:
+      - lambda: |-
+          if (!planthub::planthub_mqtt.is_aws_iot_core()) {
+            ESP_LOGI("shadow", "Provider is not aws-iot-core, skipping shadow callback");
+            return;
+          }
+          planthub::planthub_mqtt.set_shadow_callback(
+            [](const std::string &topic, const std::string &payload) {
+              // ESPHome script invocation needs values, not references.
+              id(handle_shadow_message).execute(topic, payload);
+            }
+          );
+          ESP_LOGI("shadow", "Shadow callback registered for thing=%s",
+                   planthub::planthub_mqtt.get_thing_name().c_str());
+
+  # --- Ask AWS for the current shadow ------------------------------------
+  # Retries every 5 s up to 12 times (1 minute total). Stops once the first
+  # get/accepted or update/delta arrives. Idempotent — publishing more than
+  # once is harmless, the broker just re-emits get/accepted.
+  - id: request_shadow_get
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: 'return !planthub::planthub_mqtt.is_aws_iot_core();'
+          then:
+            - logger.log:
+                format: "Shadow get skipped — non-AWS provider"
+                level: DEBUG
+          else:
+            - repeat:
+                count: 12
+                then:
+                  - if:
+                      condition:
+                        lambda: 'return id(shadow_got_initial);'
+                      then:
+                        - logger.log: "Shadow get satisfied, stopping retries"
+                      else:
+                        - lambda: |-
+                            int rc = planthub::planthub_mqtt.request_shadow_get();
+                            ESP_LOGI("shadow", "Shadow get request rc=%d", rc);
+                        - delay: 5s
+
+  # --- Handle inbound shadow messages ------------------------------------
+  # Topic format: $aws/things/{node}/shadow/name/config/{get/accepted|update/delta|...}
+  # Payload (get/accepted): {"state":{"desired":{...},"reported":{...}},
+  #                           "metadata":{...},"version":N,"timestamp":T}
+  # Payload (update/delta):  {"state":{...desired-minus-reported...},
+  #                           "metadata":{...},"version":N,"timestamp":T}
+  - id: handle_shadow_message
+    mode: queued
+    parameters:
+      topic: std::string
+      payload: std::string
+    then:
+      - lambda: |-
+          ESP_LOGI("shadow", "Shadow msg on %s (%d bytes)",
+                   topic.c_str(), (int) payload.length());
+
+          // Pick a subdocument to apply. For get/accepted we want
+          // state.desired; for update/delta the whole `state` is the delta.
+          // Heuristic: hunt for "desired" first, fall back to "state".
+          size_t scopeStart = payload.find("\"desired\":");
+          std::string scope;
+          if (scopeStart != std::string::npos) {
+            // Slice the JSON object value of "desired".
+            size_t braceStart = payload.find('{', scopeStart);
+            if (braceStart != std::string::npos) {
+              int depth = 0;
+              size_t end = std::string::npos;
+              for (size_t i = braceStart; i < payload.size(); i++) {
+                if (payload[i] == '{') depth++;
+                else if (payload[i] == '}') {
+                  depth--;
+                  if (depth == 0) { end = i; break; }
+                }
+              }
+              if (end != std::string::npos) {
+                scope = payload.substr(braceStart, end - braceStart + 1);
+              }
+            }
+          }
+          if (scope.empty()) {
+            // update/delta: the top-level state object IS the delta.
+            size_t stateStart = payload.find("\"state\":");
+            if (stateStart != std::string::npos) {
+              size_t braceStart = payload.find('{', stateStart);
+              if (braceStart != std::string::npos) {
+                int depth = 0;
+                size_t end = std::string::npos;
+                for (size_t i = braceStart; i < payload.size(); i++) {
+                  if (payload[i] == '{') depth++;
+                  else if (payload[i] == '}') {
+                    depth--;
+                    if (depth == 0) { end = i; break; }
+                  }
+                }
+                if (end != std::string::npos) {
+                  scope = payload.substr(braceStart, end - braceStart + 1);
+                }
+              }
+            }
+          }
+          if (scope.empty()) {
+            ESP_LOGW("shadow", "Could not locate desired/state object in payload");
+            return;
+          }
+
+          // The AWS shadow envelope carries `version` at the TOP level (not
+          // inside `desired`), so read it from the full payload. The
+          // backend emits `rulesHash` inside `desired` next to `rules`.
+          int desired_v = planthub::extractJsonInt(payload, "version", 0);
+          std::string desired_hash = planthub::extractJsonString(scope, "rulesHash");
+
+          if (desired_v > 0) {
+            id(shadow_desired_version) = desired_v;
+          }
+          if (!desired_hash.empty()) {
+            id(shadow_desired_hash) = desired_hash;
+          }
+          id(shadow_got_initial) = true;
+
+          // Extract sleep config if present. Phase 4 will use these values
+          // to drive deep_sleep; for now we just persist them.
+          size_t sleepKey = scope.find("\"sleep\"");
+          if (sleepKey != std::string::npos) {
+            size_t braceStart = scope.find('{', sleepKey);
+            if (braceStart != std::string::npos) {
+              int depth = 0;
+              size_t end = std::string::npos;
+              for (size_t i = braceStart; i < scope.size(); i++) {
+                if (scope[i] == '{') depth++;
+                else if (scope[i] == '}') {
+                  depth--;
+                  if (depth == 0) { end = i; break; }
+                }
+              }
+              if (end != std::string::npos) {
+                std::string sleepObj = scope.substr(braceStart, end - braceStart + 1);
+                // Jackson emits Java boolean as the JSON tokens true/false,
+                // so a string scan beats trying to coerce via extractJsonInt.
+                bool on_b = sleepObj.find("\"on\":true") != std::string::npos;
+                int w = planthub::extractJsonInt(sleepObj, "w", 0);
+                id(shadow_sleep_enabled) = on_b;
+                if (w > 0) {
+                  id(shadow_sleep_wake_interval_sec) = w;
+                }
+                ESP_LOGI("shadow", "Sleep config: enabled=%s wake=%ds",
+                  id(shadow_sleep_enabled) ? "true" : "false",
+                  id(shadow_sleep_wake_interval_sec));
+              }
+            }
+          }
+
+          // Apply the rules. If the payload doesn't include a rules array
+          // (e.g. delta only updates sleep), we leave the existing set in
+          // place rather than clearing the engine.
+          if (scope.find("\"rules\"") != std::string::npos) {
+            id(apply_rules_json).execute(scope);
+          } else {
+            ESP_LOGI("shadow", "Delta has no rules array — keeping existing %d rules",
+                     (int) id(rule_rows).size());
+          }
+      - component.update: shadow_version_sensor
+      - component.update: shadow_hash_sensor
+      # Let parse / NVS persistence settle before publishing reported state.
+      - delay: 1s
+      - script.execute: publish_shadow_reported
+
+  # --- Publish current reported state to AWS -----------------------------
+  # Confirms which version + hash we've actually applied so the backend
+  # can detect drift. Includes firmware version for ops visibility.
+  - id: publish_shadow_reported
+    mode: single
+    then:
+      - lambda: |-
+          if (!planthub::planthub_mqtt.is_aws_iot_core()) {
+            return;
+          }
+          if (!planthub::planthub_mqtt.is_connected()) {
+            ESP_LOGW("shadow", "MQTT not connected, skipping reported publish");
+            return;
+          }
+
+          std::string msg = "{\"state\":{\"reported\":{";
+          msg += "\"v\":" + std::to_string(id(shadow_desired_version));
+          msg += ",\"rulesHash\":\"" + planthub::escapeJson(id(shadow_desired_hash)) + "\"";
+          msg += ",\"sleep\":{";
+          msg += "\"on\":" + std::string(id(shadow_sleep_enabled) ? "true" : "false");
+          msg += ",\"w\":" + std::to_string(id(shadow_sleep_wake_interval_sec));
+          msg += "}";
+          msg += ",\"fw\":\"${firmware_version}\"";
+          msg += ",\"ruleCount\":" + std::to_string((int) id(rule_rows).size());
+          msg += "}}}";
+
+          int rc = planthub::planthub_mqtt.publish(
+            planthub::planthub_mqtt.get_shadow_update_topic(),
+            msg, 1, false
+          );
+          ESP_LOGI("shadow", "Published reported state (rc=%d): %s",
+                   rc, msg.c_str());

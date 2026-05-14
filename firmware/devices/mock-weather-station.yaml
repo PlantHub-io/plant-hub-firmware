@@ -129,6 +129,9 @@ packages:
   globals: !include ../common/globals.yaml
   status: !include ../common/status.yaml
   led: !include ../common/led_status.yaml
+  rule_engine: !include ../common/rule_engine.yaml
+  shadow: !include ../common/shadow.yaml
+  deep_sleep: !include ../common/deep_sleep.yaml
 
   # Mock sensors for testing without hardware
   mock: !include ../sensors/mock_sensors_weather.yaml

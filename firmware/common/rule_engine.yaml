@@ -1,0 +1,343 @@
+# common/rule_engine.yaml
+# Local automation rule engine. Mirrors the server-side
+# RuleBasedAutomationService so the device can fire watering / vent /
+# light actions even when MQTT is down or it has just woken from
+# deep sleep ahead of the next backend evaluation cycle.
+#
+# Rules are pushed to the device via AWS IoT Device Shadow (see
+# shadow.yaml) in the compact form:
+#   {"id":7,"s":"soilMoisture","op":"<","t":30,"a":"waterPump",
+#    "c":"ON","d":20,"cd":300}
+#
+# Scope: ESP32-class boards (uses std::vector + std::map on the heap).
+# Memory budget: a 30-rule payload sits well under 4 KB resident.
+
+globals:
+  # In-RAM rule store, repopulated from NVS on boot and on every shadow
+  # update. Not restored across reboots directly — load_rules_from_nvs
+  # parses the JSON blob back into structs.
+  - id: rule_rows
+    type: std::vector<planthub::RuleRow>
+    restore_value: no
+
+  # Phase 4 — Per-rule last-fired epoch is now stored in ESP32 RTC slow
+  # memory (see common/rtc_cooldown.h) so cooldowns survive deep sleep.
+  # The std::map global that used to live here was wiped on every wake,
+  # which caused rules to re-fire immediately on each sleep cycle.
+
+  # Set true once load_rules_from_nvs has run. Until then, evaluate_rules
+  # is a no-op so we don't act on stale or partial state.
+  - id: rules_loaded
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  # Compact JSON blob mirroring the latest shadow desired.rules array.
+  # We persist this via planthub::nvs_write so the value lives in the
+  # shared "planthub" NVS namespace alongside MQTT credentials and survives
+  # reboots. ESPHome's own preferences would double-write under a different
+  # key, so we keep restore_value off here.
+  - id: rules_json
+    type: std::string
+    restore_value: no
+
+  # Monotonic counter of rule firings since boot — surfaced as a
+  # diagnostic sensor for the dashboard.
+  - id: rule_firings_count
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  # Pending rule-firing audit events, populated by evaluate_rules and drained
+  # to the broker on the next successful connect. Persisted via planthub NVS
+  # ("rule_log") so it survives reboots / deep sleep / brown-outs.
+  #
+  # Format on the wire (drain_rule_log assembles):
+  #   {"events":[{"ruleId":7,"actuator":"waterPump","action":"ON",
+  #               "durationSeconds":20,"firedAt":1719000000}, ...]}
+  #
+  # Capped at RULE_LOG_MAX_EVENTS to bound NVS usage. When the cap is hit, the
+  # oldest entry is discarded (ring buffer behaviour) so the most recent
+  # firings always reach the backend.
+  - id: rule_log_events
+    type: std::vector<std::string>
+    restore_value: no
+
+text_sensor:
+  - platform: template
+    name: "Active Rules"
+    id: active_rules_sensor
+    lambda: |-
+      return std::to_string(id(rule_rows).size()) + " rules";
+    update_interval: never
+
+sensor:
+  - platform: template
+    name: "Rule Firings"
+    id: rule_firings_sensor
+    accuracy_decimals: 0
+    lambda: |-
+      return (float) id(rule_firings_count);
+    update_interval: 60s
+    internal: true
+
+interval:
+  # Periodic flush — survives the case where the first drain attempt ran
+  # before MQTT was fully connected, or a publish failed and left events in
+  # the buffer. drain_rule_log is itself a no-op when the buffer is empty.
+  - interval: 60s
+    then:
+      - script.execute: drain_rule_log
+
+script:
+  # --- Parse the persisted rules_json blob into the in-RAM vector ----------
+  # Idempotent: clears and rebuilds the vector each call. Safe to invoke
+  # after every shadow update.
+  - id: load_rules_from_nvs
+    mode: single
+    then:
+      - lambda: |-
+          id(rule_rows).clear();
+          if (id(rules_json).empty()) {
+            ESP_LOGI("rule_engine", "No rules_json in NVS — engine idle");
+            id(rules_loaded) = true;
+            return;
+          }
+          id(rule_rows) = planthub::parseShadowDeltaRules(id(rules_json));
+          id(rules_loaded) = true;
+          ESP_LOGI("rule_engine", "Loaded %d rules from NVS", (int) id(rule_rows).size());
+          for (const auto& r : id(rule_rows)) {
+            ESP_LOGD("rule_engine", "  rule #%d: %s %s %.2f -> %s %s (d=%ds cd=%ds)",
+                     r.id, r.s.c_str(), r.op.c_str(), r.t,
+                     r.a.c_str(), r.c.c_str(), r.d, r.cd);
+          }
+      - component.update: active_rules_sensor
+
+  # --- Evaluate every rule that watches `sensor_key` against `value` -------
+  # Called from each sensor's on_value lambda. Builds a synthetic command
+  # payload and dispatches through the existing handle_command script, so
+  # the per-device command_router substitution remains the single source
+  # of truth for actuator wiring.
+  - id: evaluate_rules
+    mode: queued
+    parameters:
+      sensor_key: std::string
+      value: float
+    then:
+      - lambda: |-
+          if (!id(rules_loaded)) {
+            return;  // Engine still loading — silently skip.
+          }
+          if (id(rule_rows).empty()) {
+            return;
+          }
+
+          // Epoch seconds from SNTP. If time hasn't synced yet, cooldown
+          // checks degrade to "fire once and never again until reboot",
+          // which is safer than firing in a tight loop.
+          uint32_t now_epoch = 0;
+          auto now = id(sntp_time).now();
+          if (now.is_valid()) {
+            now_epoch = (uint32_t) now.timestamp;
+          }
+
+          for (const auto& rule : id(rule_rows)) {
+            if (rule.s != sensor_key) continue;
+            if (!planthub::ruleOperatorMatches(rule.op, value, rule.t)) continue;
+
+            // Cooldown gate (RTC-backed — see rtc_cooldown.h). Skip if within
+            // rule.cd seconds of the last firing, even across deep sleep cycles.
+            uint32_t last_fired = planthub::getCooldownLastFired(rule.id);
+            if (last_fired > 0 && rule.cd > 0 && now_epoch > 0) {
+              uint32_t elapsed = now_epoch - last_fired;
+              if (elapsed < (uint32_t) rule.cd) {
+                ESP_LOGD("rule_engine",
+                  "Rule #%d (%s) suppressed by cooldown — %us / %ds elapsed",
+                  rule.id, rule.a.c_str(), elapsed, rule.cd);
+                continue;
+              }
+            }
+
+            // Synthesize the same JSON shape the backend would have sent so
+            // we route through the existing command_router substitution.
+            std::string cmd_payload = "{\"nodeId\":\"" + planthub::planthub_mqtt.get_node_id();
+            cmd_payload += "\",\"commands\":[{\"actuator\":\"" + rule.a;
+            cmd_payload += "\",\"action\":\"" + rule.c + "\"";
+            if (rule.d > 0) {
+              cmd_payload += ",\"durationSeconds\":" + std::to_string(rule.d);
+            }
+            cmd_payload += "}],\"source\":\"RULE_LOCAL\",\"ruleId\":" + std::to_string(rule.id) + "}";
+
+            ESP_LOGI("rule_engine",
+              "Rule #%d fired: %s %s %.2f (read=%.2f) -> %s %s",
+              rule.id, rule.s.c_str(), rule.op.c_str(), rule.t, value,
+              rule.a.c_str(), rule.c.c_str());
+
+            uint32_t record_at = now_epoch > 0
+                ? now_epoch
+                // Fall back to uptime-based suppression so we don't loop —
+                // unreliable across deep sleep but better than nothing on
+                // first boot before SNTP sync.
+                : (uint32_t) (millis() / 1000);
+            planthub::setCooldownLastFired(rule.id, record_at);
+            id(rule_firings_count) = id(rule_firings_count) + 1;
+
+            id(handle_command).execute(cmd_payload);
+
+            // Record this firing in the persistent audit log. We push the
+            // canonical RuleLogMqttListener event shape (not the synthetic
+            // command_router payload) so the backend can dedup on
+            // (deviceId, actuatorKey, source=RULE_LOCAL, firedAt).
+            uint32_t fired_at = now_epoch > 0 ? now_epoch : (uint32_t) (millis() / 1000);
+            std::string evt = "{\"ruleId\":" + std::to_string(rule.id);
+            evt += ",\"actuator\":\"" + rule.a + "\"";
+            evt += ",\"action\":\"" + rule.c + "\"";
+            if (rule.d > 0) {
+              evt += ",\"durationSeconds\":" + std::to_string(rule.d);
+            }
+            evt += ",\"firedAt\":" + std::to_string(fired_at);
+            evt += "}";
+
+            // Bound the buffer — drop the oldest event when full so a long
+            // offline stretch can't fill NVS. ~80 bytes/event × 64 = ~5 KB.
+            const size_t RULE_LOG_MAX_EVENTS = 64;
+            if (id(rule_log_events).size() >= RULE_LOG_MAX_EVENTS) {
+              id(rule_log_events).erase(id(rule_log_events).begin());
+              ESP_LOGW("rule_engine", "Rule log buffer full — dropped oldest event");
+            }
+            id(rule_log_events).push_back(evt);
+
+            // Persist immediately. The vector lives in heap and would
+            // otherwise vanish on power-loss or deep-sleep before the next
+            // drain. Cost: one NVS write per fire, which is rare relative to
+            // sensor publishing — acceptable wear.
+            id(persist_rule_log_buffer).execute();
+          }
+
+  # --- Replace the rule set from an arbitrary JSON blob -------------------
+  # Called by shadow.yaml when a new shadow desired state arrives. Persists
+  # to NVS so rules survive reboots even if the shadow is unreachable next
+  # boot, then rebuilds the in-RAM vector.
+  - id: apply_rules_json
+    mode: single
+    parameters:
+      json: std::string
+    then:
+      - lambda: |-
+          id(rules_json) = json;
+          planthub::nvs_write("rules_json", json);
+          planthub::nvs_save();
+          ESP_LOGI("rule_engine", "Persisted %d bytes of rules to NVS", (int) json.length());
+      - script.execute: load_rules_from_nvs
+
+  # --- Restore the rules_json blob from raw NVS on boot ------------------
+  # ESPHome's restore_value only covers state set via globals, not values
+  # written from C++ via nvs_helper. Pull the latest from the planthub
+  # namespace so the engine works on first boot after a shadow update.
+  - id: restore_rules_json_from_nvs
+    mode: single
+    then:
+      - lambda: |-
+          std::string persisted = planthub::nvs_read("rules_json");
+          if (!persisted.empty()) {
+            id(rules_json) = persisted;
+            ESP_LOGI("rule_engine", "Restored %d bytes of rules_json from NVS",
+                     (int) persisted.length());
+          }
+      - script.execute: load_rules_from_nvs
+      - script.execute: restore_rule_log_from_nvs
+
+  # --- Persist the in-RAM rule_log_events vector to NVS ------------------
+  # Serializes the vector as a single JSON array of event objects so the
+  # restore path is one nvs_read + split. Called after every append in
+  # evaluate_rules and after every successful drain.
+  - id: persist_rule_log_buffer
+    mode: single
+    then:
+      - lambda: |-
+          if (id(rule_log_events).empty()) {
+            planthub::nvs_delete("rule_log");
+            planthub::nvs_save();
+            return;
+          }
+          std::string blob = "[";
+          for (size_t i = 0; i < id(rule_log_events).size(); i++) {
+            if (i > 0) blob += ",";
+            blob += id(rule_log_events)[i];
+          }
+          blob += "]";
+          planthub::nvs_write("rule_log", blob);
+          planthub::nvs_save();
+          ESP_LOGD("rule_engine", "Persisted rule log buffer: %d events, %d bytes",
+                   (int) id(rule_log_events).size(), (int) blob.length());
+
+  # --- Restore the rule_log buffer from NVS on boot ----------------------
+  # Reads the JSON array and splits each top-level object back into the
+  # vector. Defensive: tolerates a truncated or empty blob.
+  - id: restore_rule_log_from_nvs
+    mode: single
+    then:
+      - lambda: |-
+          std::string blob = planthub::nvs_read("rule_log");
+          if (blob.size() < 3) {
+            return;  // "[]" or shorter — nothing to restore.
+          }
+          // Walk the array slicing each balanced {...} object.
+          int depth = 0;
+          size_t start = std::string::npos;
+          for (size_t i = 0; i < blob.size(); i++) {
+            char c = blob[i];
+            if (c == '{') {
+              if (depth == 0) start = i;
+              depth++;
+            } else if (c == '}') {
+              depth--;
+              if (depth == 0 && start != std::string::npos) {
+                id(rule_log_events).push_back(blob.substr(start, i - start + 1));
+                start = std::string::npos;
+              }
+            }
+          }
+          ESP_LOGI("rule_engine", "Restored %d buffered rule events from NVS",
+                   (int) id(rule_log_events).size());
+
+  # --- Drain the buffer to {tenant}/{node}/rules/log ---------------------
+  # Called on every successful MQTT connect (provisioning.yaml) and once on
+  # boot in case rules fired between deep-sleep waking and MQTT handshake.
+  # On publish success the buffer is cleared; on failure it is left intact
+  # for the next attempt.
+  - id: drain_rule_log
+    mode: single
+    then:
+      - lambda: |-
+          if (id(rule_log_events).empty()) {
+            return;
+          }
+          if (!planthub::planthub_mqtt.is_connected()) {
+            ESP_LOGD("rule_engine",
+              "MQTT not connected — deferring drain (%d events queued)",
+              (int) id(rule_log_events).size());
+            return;
+          }
+          std::string payload = "{\"events\":[";
+          for (size_t i = 0; i < id(rule_log_events).size(); i++) {
+            if (i > 0) payload += ",";
+            payload += id(rule_log_events)[i];
+          }
+          payload += "]}";
+
+          std::string topic = planthub::planthub_mqtt.get_base_topic() + "/rules/log";
+          int rc = planthub::planthub_mqtt.publish(topic, payload, 1, false);
+          if (rc < 0) {
+            ESP_LOGW("rule_engine",
+              "Drain publish failed (rc=%d) — keeping %d events buffered",
+              rc, (int) id(rule_log_events).size());
+            return;
+          }
+          ESP_LOGI("rule_engine",
+            "Drained %d offline rule firings to %s (%d bytes)",
+            (int) id(rule_log_events).size(), topic.c_str(), (int) payload.length());
+
+          id(rule_log_events).clear();
+          planthub::nvs_delete("rule_log");
+          planthub::nvs_save();

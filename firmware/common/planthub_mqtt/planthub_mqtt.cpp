@@ -3,7 +3,7 @@
 
 namespace planthub {
 
-PlantHubMqtt::PlantHubMqtt() : client_(nullptr), connected_(false), callback_(nullptr) {}
+PlantHubMqtt::PlantHubMqtt() : client_(nullptr), connected_(false), callback_(nullptr), shadow_callback_(nullptr) {}
 
 bool PlantHubMqtt::setup() {
     ESP_LOGI("mqtt", "Initializing PlantHub MQTT...");
@@ -18,8 +18,16 @@ bool PlantHubMqtt::setup() {
     }
 
     client_id_ = node_id;
+    provider_ = provider;
 
     esp_mqtt_client_config_t config = {};
+
+    // Shadow documents may approach 8 KB. The esp-mqtt default 1 KB buffer
+    // would truncate the get/accepted response and lose the rules array, so
+    // raise the inbound buffer ceiling for AWS IoT clients.
+    if (provider == "aws-iot-core") {
+        config.buffer.size = 8192;
+    }
 
     if (provider == "aws-iot-core") {
         endpoint_ = planthub::nvs_read("mqtt_endpoint");
@@ -69,8 +77,28 @@ bool PlantHubMqtt::setup() {
         capabilities_topic_ = base_topic_ + "/capabilities";
         system_topic_ = base_topic_ + "/system";
         actuator_state_topic_ = base_topic_ + "/actuator-state";
+        // Retained "maintenance" override (Phase 4) — backend / operator sets
+        // this to "1" to keep the device awake for OTA / debug. Cleared back
+        // to "0" when done. We subscribe so the broker delivers the current
+        // retained value as soon as we connect.
+        maintenance_topic_ = base_topic_ + "/maintenance";
         // Subscribe only to topics we expect commands on to avoid self-echoing
         subscribe_topic_ = "";
+
+        // AWS IoT Device Shadow topics (named shadow "config").
+        // The AWS Thing name is "{tenantId}-{nodeId}" (set in
+        // AwsIotProvisioningService.provisionDevice) — NOT just the nodeId
+        // we use for our own tenant/node MQTT topics. The shadow topic
+        // namespace is keyed on the thing name, so getting this wrong puts
+        // the backend's desired state and the device's reported state into
+        // separate shadows that never see each other.
+        // See: https://docs.aws.amazon.com/iot/latest/developerguide/device-shadow-mqtt.html
+        thing_name_ = tenant_id + "-" + node_id;
+        std::string shadow_base = "$aws/things/" + thing_name_ + "/shadow/name/config";
+        shadow_get_topic_           = shadow_base + "/get";
+        shadow_get_accepted_topic_  = shadow_base + "/get/accepted";
+        shadow_update_topic_        = shadow_base + "/update";
+        shadow_update_delta_topic_  = shadow_base + "/update/delta";
 
         // Set Last Will and Testament (LWT) to broadcast offline immediately
         config.session.last_will.topic = status_topic_.c_str();
@@ -159,6 +187,19 @@ void PlantHubMqtt::publish_will() {
     }
 }
 
+int PlantHubMqtt::request_shadow_get() {
+    if (!is_aws_iot_core()) {
+        ESP_LOGD("mqtt", "Shadow get skipped — provider is not aws-iot-core");
+        return -1;
+    }
+    if (shadow_get_topic_.empty()) {
+        ESP_LOGW("mqtt", "Shadow get topic not initialised");
+        return -1;
+    }
+    ESP_LOGI("mqtt", "Requesting shadow on %s", shadow_get_topic_.c_str());
+    return publish(shadow_get_topic_, "{}", 1, false);
+}
+
 void PlantHubMqtt::mqtt_event_handler(void* handler_args, esp_event_base_t base, 
                                        int32_t event_id, void* event_data) {
     PlantHubMqtt* self = static_cast<PlantHubMqtt*>(handler_args);
@@ -172,9 +213,18 @@ void PlantHubMqtt::mqtt_event_handler(void* handler_args, esp_event_base_t base,
             if (!self->base_topic_.empty() && self->callback_) {
                 esp_mqtt_client_subscribe(self->client_, self->actuator_topic_.c_str(), 1);
                 esp_mqtt_client_subscribe(self->client_, self->system_topic_.c_str(), 1);
+                esp_mqtt_client_subscribe(self->client_, self->maintenance_topic_.c_str(), 1);
             }
             if (!self->subscribe_topic_.empty() && self->callback_) {
                 esp_mqtt_client_subscribe(self->client_, self->subscribe_topic_.c_str(), 1);
+            }
+            // Shadow subscriptions only make sense on AWS IoT Core. Mosquitto/dev
+            // skips this — rules sync via Mosquitto is an explicit non-goal.
+            if (self->is_aws_iot_core() && !self->shadow_get_accepted_topic_.empty()) {
+                esp_mqtt_client_subscribe(self->client_, self->shadow_get_accepted_topic_.c_str(), 1);
+                esp_mqtt_client_subscribe(self->client_, self->shadow_update_delta_topic_.c_str(), 1);
+                ESP_LOGI("mqtt", "Subscribed to shadow topics for thing=%s",
+                         self->thing_name_.c_str());
             }
             break;
 
@@ -199,8 +249,17 @@ void PlantHubMqtt::mqtt_event_handler(void* handler_args, esp_event_base_t base,
             if (event->topic && event->data) {
                 std::string topic(event->topic, event->topic_len);
                 std::string payload(event->data, event->data_len);
-                ESP_LOGI("mqtt", "Received on %s: %s", topic.c_str(), payload.c_str());
-                if (self->callback_) {
+                ESP_LOGI("mqtt", "Received on %s: %zu bytes", topic.c_str(), payload.length());
+                // Route shadow traffic ($aws/things/.../shadow/...) to the dedicated
+                // shadow handler. Everything else goes to the generic callback so
+                // existing actuator/system topic flows keep working unchanged.
+                if (topic.rfind("$aws/things/", 0) == 0 && topic.find("/shadow/") != std::string::npos) {
+                    if (self->shadow_callback_) {
+                        self->shadow_callback_(topic, payload);
+                    } else {
+                        ESP_LOGW("mqtt", "Shadow message received but no shadow_callback registered");
+                    }
+                } else if (self->callback_) {
                     self->callback_(topic, payload);
                 }
             }

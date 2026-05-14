@@ -1,0 +1,140 @@
+# common/deep_sleep.yaml
+# Battery-friendly wake / publish / sleep cycle for PlantHub devices.
+#
+# Cycle:
+#   1. Wake (or boot).
+#   2. WiFi up → MQTT connect → shadow sync → drain offline rule log.
+#   3. Sensors take at least one reading; on_value evaluates rules locally.
+#   4. publish_telemetry runs the canonical sensor publish.
+#   5. maybe_sleep checks the shadow-supplied sleep config and the retained
+#      maintenance flag. If all green, deep_sleep.enter for `wake_interval_sec`.
+#
+# Override / safety:
+#   - Backend (or operator via `mosquitto_pub`) publishes retained
+#     `${tenant}/${node}/maintenance` = "1" to keep the device awake for OTA
+#     or debug. Set back to "0" / empty to resume sleep cycles.
+#   - The deep_sleep component honours a minimum `run_duration` so even a
+#     "sleep immediately" command leaves enough time for one publish round.
+#   - `shadow_sleep_enabled` is the master toggle from the dashboard. Default
+#     false → device stays online always (matches pre-Phase-4 behaviour).
+
+globals:
+  # True while the retained maintenance flag is set. Blocks maybe_sleep.
+  - id: maintenance_mode
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+deep_sleep:
+  id: deep_sleep_component
+  # Minimum awake window — long enough for WiFi join, MQTT connect, shadow
+  # sync, telemetry publish, and one drain round even on a cold boot with
+  # poor signal. Tuned conservatively; shave once telemetry settles.
+  run_duration: 90s
+  # Static fallback for the very first sleep cycle (5 min). The actual
+  # per-cycle duration is overridden by maybe_sleep via
+  # set_sleep_duration() using shadow_sleep_wake_interval_sec, because
+  # ESPHome's sleep_duration config key isn't templatable.
+  sleep_duration: 5min
+
+text_sensor:
+  - platform: template
+    name: "Maintenance Mode"
+    id: maintenance_mode_sensor
+    lambda: |-
+      return id(maintenance_mode) ? std::string("on") : std::string("off");
+    update_interval: never
+
+script:
+  # --- Retained maintenance topic handler --------------------------------
+  # Called from the MQTT inbound callback when a message lands on
+  # ${tenant_id}/${node_id}/maintenance. Payload semantics:
+  #   "1" / "true" / "on"   → enter maintenance, prevent sleep
+  #   anything else (incl. empty) → leave maintenance, allow sleep
+  - id: handle_maintenance
+    mode: queued
+    parameters:
+      payload: std::string
+    then:
+      - lambda: |-
+          bool on = (payload == "1" || payload == "true" || payload == "on" ||
+                     payload == "ON" || payload == "True");
+          if (on == id(maintenance_mode)) {
+            ESP_LOGD("deep_sleep", "Maintenance unchanged (%s)", on ? "on" : "off");
+            return;
+          }
+          id(maintenance_mode) = on;
+          if (on) {
+            id(deep_sleep_component).prevent_deep_sleep();
+            ESP_LOGW("deep_sleep",
+              "Maintenance mode ON — deep sleep prevented (OTA / debug window open)");
+          } else {
+            id(deep_sleep_component).allow_deep_sleep();
+            ESP_LOGI("deep_sleep",
+              "Maintenance mode OFF — deep sleep re-enabled");
+          }
+      - component.update: maintenance_mode_sensor
+
+  # --- Decide whether to sleep, and do it -------------------------------
+  # Called by status.yaml after every successful telemetry publish. All the
+  # gates have to clear or we stay awake until the next opportunity. Idempotent.
+  - id: maybe_sleep
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(provisioning_complete)) {
+            ESP_LOGD("deep_sleep", "Not provisioned yet, staying awake");
+            return;
+          }
+          if (!id(shadow_sleep_enabled)) {
+            ESP_LOGD("deep_sleep", "Sleep disabled in shadow config");
+            return;
+          }
+          if (id(shadow_sleep_wake_interval_sec) < 60) {
+            // Backend already clamps, but guard the firmware path too.
+            ESP_LOGW("deep_sleep",
+              "Wake interval %ds below 60s floor — refusing to sleep",
+              id(shadow_sleep_wake_interval_sec));
+            return;
+          }
+          if (id(maintenance_mode)) {
+            ESP_LOGI("deep_sleep", "Maintenance mode active — staying awake");
+            return;
+          }
+          if (!id(rule_log_events).empty()) {
+            // A drain attempt is queued; let it run before we drop the link.
+            ESP_LOGI("deep_sleep",
+              "Rule log buffer non-empty (%d events) — deferring sleep",
+              (int) id(rule_log_events).size());
+            id(drain_rule_log).execute();
+            return;
+          }
+          ESP_LOGI("deep_sleep",
+            "Entering deep sleep for %ds (next wake will resync shadow + drain)",
+            id(shadow_sleep_wake_interval_sec));
+      - if:
+          condition:
+            lambda: |-
+              return id(provisioning_complete)
+                  && id(shadow_sleep_enabled)
+                  && id(shadow_sleep_wake_interval_sec) >= 60
+                  && !id(maintenance_mode)
+                  && id(rule_log_events).empty();
+          then:
+            # Apply the latest shadow-supplied wake interval to the deep_sleep
+            # component. sleep_duration isn't templatable in YAML, so we call
+            # the C++ setter directly. Also publish a "sleeping" status with
+            # retain=true so dashboard viewers can distinguish planned sleep
+            # from a hard offline.
+            - lambda: |-
+                int s = id(shadow_sleep_wake_interval_sec);
+                if (s < 60) s = 60;
+                if (s > 86400) s = 86400;
+                id(deep_sleep_component).set_sleep_duration(((uint32_t) s) * 1000U);
+                if (planthub::planthub_mqtt.is_connected()) {
+                  planthub::planthub_mqtt.publish(
+                    planthub::planthub_mqtt.get_status_topic(),
+                    "sleeping", 1, true);
+                }
+            - delay: 500ms  # let publish flush before radio dies
+            - deep_sleep.enter: deep_sleep_component

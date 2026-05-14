@@ -12,6 +12,7 @@ esphome:
   includes:
     - ../common/json_helper.h
     - ../common/nvs_helper.h
+    - ../common/rtc_cooldown.h
     - ../common/planthub_mqtt/planthub_mqtt.h
     - ../common/planthub_mqtt/planthub_mqtt.cpp
     - ../common/provisioning_page.h
@@ -55,6 +56,19 @@ esphome:
               id(publish_capabilities).execute();
               ESP_LOGI("boot", "Boot complete - capabilities published");
             }
+        # Ask the broker for the latest shadow desired state. No-op on Mosquitto.
+        - if:
+            condition:
+              lambda: 'return id(provisioning_complete) && planthub::planthub_mqtt.is_aws_iot_core();'
+            then:
+              - script.execute: request_shadow_get
+        # Drain any rule firings buffered while offline. Idempotent — exits
+        # early if there's nothing to send.
+        - if:
+            condition:
+              lambda: 'return id(provisioning_complete);'
+            then:
+              - script.execute: drain_rule_log
     # Priority -200: Register web server provisioning handler (needs web server ready)
     - priority: -200
       then:

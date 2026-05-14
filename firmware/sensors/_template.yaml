@@ -81,4 +81,7 @@ sensor:
             // Write the reading into the shared map under a camelCase key.
             // The key is what shows up on the dashboard. Be consistent across
             // devices so history charts stack correctly.
-            id(sensor_values)["mySensor"] = x;
+            // Always guard with !std::isnan(x) — a failed sensor read returns NaN,
+            // and NaN written into the map serialises as the literal token "nan",
+            // which is invalid JSON and causes the backend to drop the whole publish.
+            if (!std::isnan(x)) id(sensor_values)["mySensor"] = x;

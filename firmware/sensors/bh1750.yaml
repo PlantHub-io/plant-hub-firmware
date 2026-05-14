@@ -22,4 +22,7 @@ sensor:
     update_interval: ${sensor_update_interval}
     on_value:
       then:
-        - lambda: 'id(sensor_values)["lightLevel"] = x;'
+        - lambda: |-
+            if (std::isnan(x)) return;
+            id(sensor_values)["lightLevel"] = x;
+            id(evaluate_rules).execute(std::string("lightLevel"), x);
