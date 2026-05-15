@@ -13,8 +13,6 @@
 #   - Backend (or operator via `mosquitto_pub`) publishes retained
 #     `${tenant}/${node}/maintenance` = "1" to keep the device awake for OTA
 #     or debug. Set back to "0" / empty to resume sleep cycles.
-#   - The deep_sleep component honours a minimum `run_duration` so even a
-#     "sleep immediately" command leaves enough time for one publish round.
 #   - `shadow_sleep_enabled` is the master toggle from the dashboard. Default
 #     false → device stays online always (matches pre-Phase-4 behaviour).
 #   - `shadow_got_initial` must be true before we will sleep. On cold boot
@@ -22,6 +20,11 @@
 #     stale in-memory value can never put us to sleep before the backend has
 #     spoken. shadow_sleep_enabled is also intentionally non-persistent — see
 #     common/shadow.yaml.
+#   - There is no `run_duration` on the deep_sleep component below. ESPHome's
+#     run_duration timer enters sleep DIRECTLY without consulting maybe_sleep,
+#     so leaving it set put unclaimed / not-yet-synced devices to sleep ~90 s
+#     after boot. Sleep is now exclusively driven by maybe_sleep's explicit
+#     `deep_sleep.enter` action, which checks every gate above.
 
 globals:
   # True while the retained maintenance flag is set. Blocks maybe_sleep.
@@ -32,12 +35,18 @@ globals:
 
 deep_sleep:
   id: deep_sleep_component
-  # Minimum awake window — long enough for WiFi join, MQTT connect, shadow
-  # sync, telemetry publish, and one drain round even on a cold boot with
-  # poor signal. Tuned conservatively; shave once telemetry settles.
-  run_duration: 90s
-  # Static fallback for the very first sleep cycle (5 min). The actual
-  # per-cycle duration is overridden by maybe_sleep via
+  # `run_duration` is intentionally omitted. ESPHome's deep_sleep component
+  # arms a set_timeout(run_duration, enter_deep_sleep) at setup() that fires
+  # esp_deep_sleep_start() DIRECTLY, bypassing maybe_sleep and every gate it
+  # enforces — so an unclaimed (or otherwise not-ready) device would sleep
+  # ~run_duration seconds after boot regardless of provisioning_complete /
+  # shadow_got_initial / shadow_sleep_enabled. With run_duration omitted the
+  # timer is never armed; sleep happens only via the explicit
+  # `deep_sleep.enter` action in `maybe_sleep` below, which already checks
+  # every safety condition.
+  #
+  # Static fallback duration for the very first sleep cycle (5 min). The
+  # actual per-cycle duration is overridden by maybe_sleep via
   # set_sleep_duration() using shadow_sleep_wake_interval_sec, because
   # ESPHome's sleep_duration config key isn't templatable.
   sleep_duration: 5min
