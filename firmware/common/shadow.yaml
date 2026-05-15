@@ -38,17 +38,20 @@ globals:
     restore_value: no
     initial_value: "false"
 
-  # Pending sleep config from desired state. shadow.yaml only writes to NVS
-  # and updates these globals — the deep-sleep loop in Phase 4 will read
-  # them. Phase 2 ignores them, which is intentional.
+  # Pending sleep config from desired state. Re-fetched from AWS on every
+  # boot — we deliberately do NOT persist these to NVS. The shadow is the
+  # source of truth; a stale "enabled=true" surviving a reboot would put a
+  # device to sleep before it ever heard the desired state, which is exactly
+  # what caused the offline-after-reflash bug. See maybe_sleep in
+  # common/deep_sleep.yaml for the matching `shadow_got_initial` gate.
   - id: shadow_sleep_enabled
     type: bool
-    restore_value: yes
+    restore_value: no
     initial_value: "false"
 
   - id: shadow_sleep_wake_interval_sec
     type: int
-    restore_value: yes
+    restore_value: no
     initial_value: "0"
 
 text_sensor:
@@ -195,8 +198,11 @@ script:
           }
           id(shadow_got_initial) = true;
 
-          // Extract sleep config if present. Phase 4 will use these values
-          // to drive deep_sleep; for now we just persist them.
+          // Extract sleep config if present. A delta may carry the `sleep`
+          // block with only the field that changed — e.g. `{"sleep":{"w":600}}`
+          // when the wake interval changed but `on` did not. Each sub-key is
+          // therefore updated independently; if a key isn't in the payload we
+          // leave the corresponding global alone instead of clobbering it.
           size_t sleepKey = scope.find("\"sleep\"");
           if (sleepKey != std::string::npos) {
             size_t braceStart = scope.find('{', sleepKey);
@@ -214,15 +220,22 @@ script:
                 std::string sleepObj = scope.substr(braceStart, end - braceStart + 1);
                 // Jackson emits Java boolean as the JSON tokens true/false,
                 // so a string scan beats trying to coerce via extractJsonInt.
-                bool on_b = sleepObj.find("\"on\":true") != std::string::npos;
-                int w = planthub::extractJsonInt(sleepObj, "w", 0);
-                id(shadow_sleep_enabled) = on_b;
-                if (w > 0) {
-                  id(shadow_sleep_wake_interval_sec) = w;
+                bool on_present = sleepObj.find("\"on\":") != std::string::npos;
+                bool w_present  = sleepObj.find("\"w\":")  != std::string::npos;
+                if (on_present) {
+                  id(shadow_sleep_enabled) =
+                    sleepObj.find("\"on\":true") != std::string::npos;
                 }
-                ESP_LOGI("shadow", "Sleep config: enabled=%s wake=%ds",
+                if (w_present) {
+                  int w = planthub::extractJsonInt(sleepObj, "w", 0);
+                  if (w > 0) {
+                    id(shadow_sleep_wake_interval_sec) = w;
+                  }
+                }
+                ESP_LOGI("shadow", "Sleep config: enabled=%s wake=%ds (on_present=%d w_present=%d)",
                   id(shadow_sleep_enabled) ? "true" : "false",
-                  id(shadow_sleep_wake_interval_sec));
+                  id(shadow_sleep_wake_interval_sec),
+                  on_present ? 1 : 0, w_present ? 1 : 0);
               }
             }
           }

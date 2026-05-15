@@ -17,6 +17,11 @@
 #     "sleep immediately" command leaves enough time for one publish round.
 #   - `shadow_sleep_enabled` is the master toggle from the dashboard. Default
 #     false → device stays online always (matches pre-Phase-4 behaviour).
+#   - `shadow_got_initial` must be true before we will sleep. On cold boot
+#     the device waits for the first `get/accepted` (or `update/delta`) so a
+#     stale in-memory value can never put us to sleep before the backend has
+#     spoken. shadow_sleep_enabled is also intentionally non-persistent — see
+#     common/shadow.yaml.
 
 globals:
   # True while the retained maintenance flag is set. Blocks maybe_sleep.
@@ -86,6 +91,16 @@ script:
             ESP_LOGD("deep_sleep", "Not provisioned yet, staying awake");
             return;
           }
+          if (!id(shadow_got_initial)) {
+            // Cold boot: do not sleep before the first shadow sync has
+            // confirmed the desired state. Otherwise a stale in-memory value
+            // (or any future regression that brings back NVS persistence)
+            // could put the device to sleep before it ever heard from the
+            // backend.
+            ESP_LOGI("deep_sleep",
+              "Shadow not yet synced — staying awake until first get/accepted");
+            return;
+          }
           if (!id(shadow_sleep_enabled)) {
             ESP_LOGD("deep_sleep", "Sleep disabled in shadow config");
             return;
@@ -116,6 +131,7 @@ script:
           condition:
             lambda: |-
               return id(provisioning_complete)
+                  && id(shadow_got_initial)
                   && id(shadow_sleep_enabled)
                   && id(shadow_sleep_wake_interval_sec) >= 60
                   && !id(maintenance_mode)
