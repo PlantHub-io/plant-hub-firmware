@@ -26,3 +26,12 @@ globals:
     type: int
     restore_value: no
     initial_value: '4100'
+
+  # MPPT/charger status flag — 1 while the solar panel is actively topping up
+  # the battery, 0 otherwise. Published in the telemetry block (not as a
+  # sensor reading) since it's device infrastructure state, like battery_mv.
+  # Variants without a charge-status pin leave this at 0.
+  - id: is_charging
+    type: int
+    restore_value: no
+    initial_value: '0'

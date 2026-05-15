@@ -100,8 +100,7 @@ substitutions:
     msg += "{\"sensorKey\":\"pressure\",\"sensorType\":\"bmp280\",\"unit\":\"hPa\",\"displayName\":\"Pressure\",\"minValue\":300,\"maxValue\":1100,\"precision\":0.01},";
     msg += "{\"sensorKey\":\"soilTemp\",\"sensorType\":\"ds18b20\",\"unit\":\"°C\",\"displayName\":\"Soil Temperature\",\"minValue\":-55,\"maxValue\":125,\"precision\":0.1},";
     msg += "{\"sensorKey\":\"lightLevel\",\"sensorType\":\"temt6000\",\"unit\":\"lx\",\"displayName\":\"Light Level\",\"minValue\":0,\"maxValue\":10000,\"precision\":1},";
-    msg += "{\"sensorKey\":\"soilMoisture\",\"sensorType\":\"capacitive_adc\",\"unit\":\"%\",\"displayName\":\"Soil Moisture\",\"minValue\":0,\"maxValue\":100,\"precision\":0.1},";
-    msg += "{\"sensorKey\":\"charging\",\"sensorType\":\"binary\",\"unit\":\"\",\"displayName\":\"Charging\",\"minValue\":0,\"maxValue\":1,\"precision\":1}";
+    msg += "{\"sensorKey\":\"soilMoisture\",\"sensorType\":\"capacitive_adc\",\"unit\":\"%\",\"displayName\":\"Soil Moisture\",\"minValue\":0,\"maxValue\":100,\"precision\":0.1}";
 
   capabilities_actuators: |-
     msg += "{\"actuatorKey\":\"waterPump\",\"actuatorType\":\"relay\",\"displayName\":\"Water Pump\",\"supportedCommands\":[\"ON\",\"OFF\"],\"controlType\":\"BINARY\",\"durationSupported\":true,\"maxDurationSeconds\":${pump_max_duration}}";

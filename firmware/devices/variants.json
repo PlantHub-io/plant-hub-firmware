@@ -72,7 +72,7 @@
         { "pin": "VBAT / 5V",    "component": "Pump motor driver VCC" },
         { "pin": "GND",          "component": "Common GND" }
       ],
-      "sensors":   ["temperature", "pressure", "soilTemp", "lightLevel", "soilMoisture", "charging"],
+      "sensors":   ["temperature", "pressure", "soilTemp", "lightLevel", "soilMoisture"],
       "actuators": ["waterPump"]
     }
   ]

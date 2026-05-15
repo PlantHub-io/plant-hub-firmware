@@ -75,7 +75,7 @@ script:
   # Format: {
   #   "timestamp": <epoch_seconds>,
   #   "sensors":   {"key": value, ...},
-  #   "telemetry": {"batteryMv": <int>, "rssi": <int>, "uptimeSec": <int>, "freeHeap": <int>}
+  #   "telemetry": {"batteryMv": <int>, "isCharging": <0|1>, "rssi": <int>, "uptimeSec": <int>, "freeHeap": <int>}
   # }
   # The `telemetry` block is extracted by SensorIngestionService on the backend
   # and persisted to the devices row (not to the sensor_readings hypertable).
@@ -108,6 +108,7 @@ script:
           msg += "},";
           msg += "\"telemetry\":{";
           msg += "\"batteryMv\":" + std::to_string(id(battery_mv)) + ",";
+          msg += "\"isCharging\":" + std::to_string(id(is_charging)) + ",";
           msg += "\"rssi\":" + std::to_string(rssi) + ",";
           msg += "\"uptimeSec\":" + std::to_string(uptime_s) + ",";
           msg += "\"freeHeap\":" + std::to_string((unsigned long) esp_get_free_heap_size());

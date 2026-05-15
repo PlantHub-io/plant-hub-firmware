@@ -13,8 +13,11 @@
 # internal pull-up and `inverted: true` so the firmware sees a clean
 # "charging" boolean: HIGH = battery is being topped up by the solar panel.
 #
-# Published under the sensor key "charging" as a 0.0/1.0 float so it flows
-# through the same telemetry + rule-engine path as the analog sensors.
+# Charging state is reported in the telemetry block (alongside batteryMv,
+# rssi, uptime) — not as a sensor reading — because it's device
+# infrastructure state, not a plant-condition measurement. The shared
+# `is_charging` global (common/globals.yaml) is consumed by publish_telemetry
+# in common/status.yaml.
 
 binary_sensor:
   - platform: gpio
@@ -30,6 +33,4 @@ binary_sensor:
     on_state:
       then:
         - lambda: |-
-            float v = x ? 1.0f : 0.0f;
-            id(sensor_values)["charging"] = v;
-            id(evaluate_rules).execute(std::string("charging"), v);
+            id(is_charging) = x ? 1 : 0;
