@@ -19,18 +19,18 @@ esphome:
     - ../common/provisioning_handler.h
     - ../common/wifi_ap_access.h
   platformio_options:
-    extra_scripts:
-      - pre:../../../../common/build_captive_portal.py
     # ESPHome emits globals (line ~130 in main.cpp) BEFORE it emits the
     # `#include` lines for entries in `esphome.includes:` (which land near
     # line 340). The `rule_engine.yaml` global `std::vector<planthub::RuleRow>`
     # references a type defined in `json_helper.h`, so without forcing the
     # header earlier the compile fails with "'planthub' was not declared in
-    # this scope". `-include` forces the header to be processed at the top of
-    # every translation unit, before any other source. `#pragma once` in the
-    # header keeps the later regular include benign.
-    build_flags:
-      - "-include json_helper.h"
+    # this scope". The pre-script patches the generated main.cpp directly to
+    # inject the include early — narrower than any `build_flags`/`CXXFLAGS`
+    # approach, which either hits ESP-IDF C sources (cmath missing) or C++
+    # component sources outside src/ (header not on include path).
+    extra_scripts:
+      - pre:../../../../common/build_captive_portal.py
+      - pre:../../../../common/force_include_json_helper.py
   # All on_boot entries consolidated here to avoid ESPHome package merge
   # conflicts. When multiple packages define esphome: on_boot:, only the
   # last package's entries survive. Keeping them all here guarantees they
