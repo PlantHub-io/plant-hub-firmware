@@ -1,0 +1,30 @@
+# sensors/ds18b20.yaml
+# DS18B20 1-Wire temperature probe used as a soil-temperature sensor.
+#
+# Required substitutions:
+#   ${ds18b20_pin}            — GPIO with the DQ line (e.g. GPIO1)
+#   ${sensor_update_interval} — how often to read (e.g. 60s)
+#
+# Wiring:
+#   DQ  → ${ds18b20_pin}, with a 4.7 kΩ pull-up to 3.3V
+#   VDD → 3.3V
+#   GND → GND
+#
+# Published under the sensor key "soilTemp" to distinguish it from the
+# ambient air "temperature" emitted by BME280/BMP280 packages.
+
+one_wire:
+  - platform: gpio
+    pin: ${ds18b20_pin}
+
+sensor:
+  - platform: dallas_temp
+    name: "Soil Temperature"
+    id: soil_temp
+    update_interval: ${sensor_update_interval}
+    on_value:
+      then:
+        - lambda: |-
+            if (std::isnan(x)) return;
+            id(sensor_values)["soilTemp"] = x;
+            id(evaluate_rules).execute(std::string("soilTemp"), x);

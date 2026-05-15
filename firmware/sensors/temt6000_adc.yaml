@@ -1,0 +1,37 @@
+# sensors/temt6000_adc.yaml
+# TEMT6000 ambient light sensor via the ESP32 ADC.
+#
+# Required substitutions:
+#   ${temt6000_pin}           — ADC GPIO the breakout signal pin is wired to
+#   ${sensor_update_interval} — how often to read (e.g. 60s)
+#
+# Wiring:
+#   SIG → ${temt6000_pin}   (analog out of the breakout's transimpedance stage)
+#   VCC → 3.3V
+#   GND → GND
+#
+# The voltage→lux conversion below assumes the common breakout layout with a
+# 10 kΩ load resistor between the phototransistor emitter and ground. This is
+# an approximation, not a calibrated photometer reading — useful for relative
+# light-level rules and trend graphs, off by ~30% absolute. Published under
+# the sensor key "lightLevel" so it lines up with BH1750-driven variants.
+
+sensor:
+  - platform: adc
+    pin: ${temt6000_pin}
+    name: "Light Level"
+    id: light_level
+    attenuation: 12db
+    samples: 10
+    update_interval: ${sensor_update_interval}
+    unit_of_measurement: "lx"
+    accuracy_decimals: 0
+    icon: "mdi:white-balance-sunny"
+    filters:
+      - multiply: 500.0
+    on_value:
+      then:
+        - lambda: |-
+            if (std::isnan(x)) return;
+            id(sensor_values)["lightLevel"] = x;
+            id(evaluate_rules).execute(std::string("lightLevel"), x);

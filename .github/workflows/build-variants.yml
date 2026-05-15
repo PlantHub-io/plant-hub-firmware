@@ -42,6 +42,11 @@ jobs:
             build_dir: planthub-s3-001
             chip_family: ESP32-S3
             display_name: PlantHub S3 Zero
+          - id: c3supermini-solar-bmp280-temt-ds18-soil-pump
+            yaml: c3supermini-solar.yaml
+            build_dir: planthub-c3-solar-001
+            chip_family: ESP32-C3
+            display_name: PlantHub C3 SuperMini Solar
     steps:
       - name: Checkout
         uses: actions/checkout@v4

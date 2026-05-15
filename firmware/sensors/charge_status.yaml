@@ -1,0 +1,35 @@
+# sensors/charge_status.yaml
+# MPPT / Li-ion charger CHRG status line as a digital binary sensor.
+#
+# Required substitutions:
+#   ${charge_status_pin} — GPIO the CHRG line is wired to (e.g. GPIO7)
+#
+# Wiring:
+#   CHRG → ${charge_status_pin}
+#   GND  → shared GND
+#
+# Most hobby charger ICs (TP4056, CN3791, IP5306, etc.) drive CHRG LOW while
+# actively charging and float (high-impedance) when done/idle. We enable the
+# internal pull-up and `inverted: true` so the firmware sees a clean
+# "charging" boolean: HIGH = battery is being topped up by the solar panel.
+#
+# Published under the sensor key "charging" as a 0.0/1.0 float so it flows
+# through the same telemetry + rule-engine path as the analog sensors.
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: ${charge_status_pin}
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: "Charging"
+    id: charge_status
+    icon: "mdi:solar-power"
+    on_state:
+      then:
+        - lambda: |-
+            float v = x ? 1.0f : 0.0f;
+            id(sensor_values)["charging"] = v;
+            id(evaluate_rules).execute(std::string("charging"), v);
