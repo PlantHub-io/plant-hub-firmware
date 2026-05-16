@@ -1,0 +1,13 @@
+{
+  "name": "PlantHub S3 Zero",
+  "version": "0.0.0+0bb9f85",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        { "path": "firmware.factory.bin", "offset": 0 }
+      ]
+    }
+  ]
+}
