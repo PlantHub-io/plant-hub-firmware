@@ -249,11 +249,11 @@ void PlantHubMqtt::mqtt_event_handler(void* handler_args, esp_event_base_t base,
             break;
 
         case MQTT_EVENT_SUBSCRIBED:
-            ESP_LOGI("mqtt", "MQTT subscribed, msg_id=%d", event->msg_id);
+            ESP_LOGD("mqtt", "MQTT subscribed, msg_id=%d", event->msg_id);
             break;
 
         case MQTT_EVENT_UNSUBSCRIBED:
-            ESP_LOGI("mqtt", "MQTT unsubscribed, msg_id=%d", event->msg_id);
+            ESP_LOGD("mqtt", "MQTT unsubscribed, msg_id=%d", event->msg_id);
             break;
 
         case MQTT_EVENT_PUBLISHED:
@@ -264,7 +264,7 @@ void PlantHubMqtt::mqtt_event_handler(void* handler_args, esp_event_base_t base,
             if (event->topic && event->data) {
                 std::string topic(event->topic, event->topic_len);
                 std::string payload(event->data, event->data_len);
-                ESP_LOGI("mqtt", "Received on %s: %zu bytes", topic.c_str(), payload.length());
+                ESP_LOGD("mqtt", "Received on %s: %zu bytes", topic.c_str(), payload.length());
                 // Route shadow traffic ($aws/things/.../shadow/...) to the dedicated
                 // shadow handler. Everything else goes to the generic callback so
                 // existing actuator/system topic flows keep working unchanged.

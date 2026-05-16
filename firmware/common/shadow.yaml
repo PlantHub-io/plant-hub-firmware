@@ -161,8 +161,13 @@ script:
       payload: std::string
     then:
       - lambda: |-
-          ESP_LOGI("shadow", "Shadow msg on %s (%d bytes)",
+          ESP_LOGD("shadow", "Shadow msg on %s (%d bytes)",
                    topic.c_str(), (int) payload.length());
+
+          // Whether this message is an update/delta vs the initial
+          // get/accepted. We treat `rules` keys inside a delta as untrusted
+          // (see the rules-handling block below).
+          bool is_delta = topic.find("/update/delta") != std::string::npos;
 
           // Pick a subdocument to apply. For get/accepted we want
           // state.desired; for update/delta the whole `state` is the delta.
@@ -339,8 +344,11 @@ script:
             planthub::planthub_mqtt.get_shadow_update_topic(),
             msg, 1, false
           );
-          ESP_LOGI("shadow", "Published reported state (rc=%d): %s",
-                   rc, msg.c_str());
+          // Keep the rc at INFO so we can confirm publishes land, but drop
+          // the full JSON body — it's verbose and only useful when debugging.
+          ESP_LOGI("shadow", "Published reported state (rc=%d, %d bytes)",
+                   rc, (int) msg.length());
+          ESP_LOGD("shadow", "Reported payload: %s", msg.c_str());
 
           // Only treat the publish as the "last published" baseline if the
           // broker accepted it. A negative rc means we never made it on the
