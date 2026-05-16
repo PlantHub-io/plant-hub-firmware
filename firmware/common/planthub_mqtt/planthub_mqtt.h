@@ -43,6 +43,7 @@ public:
     bool subscribe(const std::string& topic, MessageCallback callback, int qos = 1);
     void set_callback(MessageCallback callback) { callback_ = callback; }
     void set_shadow_callback(MessageCallback callback) { shadow_callback_ = callback; }
+    void set_rules_config_callback(MessageCallback callback) { rules_config_callback_ = callback; }
     bool is_connected() const;
     bool is_aws_iot_core() const { return provider_ == "aws-iot-core"; }
 
@@ -54,6 +55,7 @@ public:
     const std::string& get_system_topic() const { return system_topic_; }
     const std::string& get_actuator_state_topic() const { return actuator_state_topic_; }
     const std::string& get_maintenance_topic() const { return maintenance_topic_; }
+    const std::string& get_rules_config_topic() const { return rules_config_topic_; }
     const std::string& get_shadow_get_topic() const { return shadow_get_topic_; }
     const std::string& get_shadow_update_topic() const { return shadow_update_topic_; }
     const std::string& get_node_id() const { return client_id_; }
@@ -96,6 +98,12 @@ private:
     std::string system_topic_;
     std::string actuator_state_topic_;
     std::string maintenance_topic_;
+    // Retained backend → device rules feed. Carries the canonical compact
+    // rules JSON ({"rules":[...],"rulesHash":"..."}) that used to live inside
+    // the shadow desired-state. Decoupling rules from the shadow stops AWS
+    // from re-emitting update/delta forever when the device echoes back only
+    // the hash.
+    std::string rules_config_topic_;
     std::string thing_name_;
     std::string shadow_get_topic_;
     std::string shadow_get_accepted_topic_;
@@ -104,6 +112,7 @@ private:
     std::string subscribe_topic_;
     MessageCallback callback_;
     MessageCallback shadow_callback_;
+    MessageCallback rules_config_callback_;
 };
 
 extern PlantHubMqtt planthub_mqtt;

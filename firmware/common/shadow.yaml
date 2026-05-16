@@ -54,6 +54,35 @@ globals:
     restore_value: no
     initial_value: "0"
 
+  # Debounce state for publish_shadow_reported. AWS Shadow recomputes delta
+  # on every device-side `update` publish, so an unnecessary reported publish
+  # triggers a fresh `update/delta` from AWS — and if the delta cannot ever
+  # be satisfied (e.g. desired.rules vs reported's hash-only echo), it loops.
+  # We short-circuit when none of the fields we actually report have changed.
+  - id: shadow_reported_last_v
+    type: int
+    restore_value: no
+    initial_value: "-1"
+
+  - id: shadow_reported_last_hash
+    type: std::string
+    restore_value: no
+
+  - id: shadow_reported_last_sleep_on
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: shadow_reported_last_sleep_w
+    type: int
+    restore_value: no
+    initial_value: "-1"
+
+  - id: shadow_reported_last_rule_count
+    type: int
+    restore_value: no
+    initial_value: "-1"
+
 text_sensor:
   - platform: template
     name: "Shadow Version"
@@ -270,6 +299,31 @@ script:
             return;
           }
 
+          // Debounce: skip publish if every field we report matches what we
+          // last published. AWS Shadow re-emits update/delta on every update
+          // we send, so an unnecessary republish is what turns a single
+          // unsatisfiable delta into a runaway loop. The version field
+          // intentionally drives the comparison so an honest desired-version
+          // bump from the backend still gets acknowledged.
+          int  cur_v        = id(shadow_desired_version);
+          const std::string& cur_hash = id(shadow_desired_hash);
+          bool cur_sleep_on = id(shadow_sleep_enabled);
+          int  cur_sleep_w  = id(shadow_sleep_wake_interval_sec);
+          int  cur_rc       = (int) id(rule_rows).size();
+
+          bool unchanged =
+            cur_v        == id(shadow_reported_last_v) &&
+            cur_hash     == id(shadow_reported_last_hash) &&
+            cur_sleep_on == id(shadow_reported_last_sleep_on) &&
+            cur_sleep_w  == id(shadow_reported_last_sleep_w) &&
+            cur_rc       == id(shadow_reported_last_rule_count);
+          if (unchanged) {
+            ESP_LOGD("shadow",
+              "Reported state unchanged (v=%d hash=%s rc=%d) — skipping publish",
+              cur_v, cur_hash.c_str(), cur_rc);
+            return;
+          }
+
           std::string msg = "{\"state\":{\"reported\":{";
           msg += "\"v\":" + std::to_string(id(shadow_desired_version));
           msg += ",\"rulesHash\":\"" + planthub::escapeJson(id(shadow_desired_hash)) + "\"";
@@ -287,3 +341,15 @@ script:
           );
           ESP_LOGI("shadow", "Published reported state (rc=%d): %s",
                    rc, msg.c_str());
+
+          // Only treat the publish as the "last published" baseline if the
+          // broker accepted it. A negative rc means we never made it on the
+          // wire, so leaving the cache untouched will let the next attempt
+          // try again instead of silently swallowing the failure.
+          if (rc >= 0) {
+            id(shadow_reported_last_v)          = cur_v;
+            id(shadow_reported_last_hash)       = cur_hash;
+            id(shadow_reported_last_sleep_on)   = cur_sleep_on;
+            id(shadow_reported_last_sleep_w)    = cur_sleep_w;
+            id(shadow_reported_last_rule_count) = cur_rc;
+          }

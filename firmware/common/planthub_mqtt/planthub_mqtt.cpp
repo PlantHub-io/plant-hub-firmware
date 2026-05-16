@@ -3,7 +3,10 @@
 
 namespace planthub {
 
-PlantHubMqtt::PlantHubMqtt() : client_(nullptr), connected_(false), callback_(nullptr), shadow_callback_(nullptr) {}
+PlantHubMqtt::PlantHubMqtt()
+    : client_(nullptr), connected_(false),
+      callback_(nullptr), shadow_callback_(nullptr),
+      rules_config_callback_(nullptr) {}
 
 bool PlantHubMqtt::setup() {
     ESP_LOGI("mqtt", "Initializing PlantHub MQTT...");
@@ -82,6 +85,10 @@ bool PlantHubMqtt::setup() {
         // to "0" when done. We subscribe so the broker delivers the current
         // retained value as soon as we connect.
         maintenance_topic_ = base_topic_ + "/maintenance";
+        // Retained backend → device rules feed. Subscribed on every connect
+        // so the broker (re)delivers the latest retained rules message as the
+        // single source of truth, independent of the AWS IoT Device Shadow.
+        rules_config_topic_ = base_topic_ + "/rules/config";
         // Subscribe only to topics we expect commands on to avoid self-echoing
         subscribe_topic_ = "";
 
@@ -215,6 +222,14 @@ void PlantHubMqtt::mqtt_event_handler(void* handler_args, esp_event_base_t base,
                 esp_mqtt_client_subscribe(self->client_, self->system_topic_.c_str(), 1);
                 esp_mqtt_client_subscribe(self->client_, self->maintenance_topic_.c_str(), 1);
             }
+            // Rules config feed — independent of the generic `callback_` so a
+            // device built without the rule engine (future variants) can simply
+            // leave `rules_config_callback_` unset and skip this subscription.
+            if (!self->rules_config_topic_.empty() && self->rules_config_callback_) {
+                esp_mqtt_client_subscribe(self->client_, self->rules_config_topic_.c_str(), 1);
+                ESP_LOGI("mqtt", "Subscribed to rules-config topic %s",
+                         self->rules_config_topic_.c_str());
+            }
             if (!self->subscribe_topic_.empty() && self->callback_) {
                 esp_mqtt_client_subscribe(self->client_, self->subscribe_topic_.c_str(), 1);
             }
@@ -258,6 +273,16 @@ void PlantHubMqtt::mqtt_event_handler(void* handler_args, esp_event_base_t base,
                         self->shadow_callback_(topic, payload);
                     } else {
                         ESP_LOGW("mqtt", "Shadow message received but no shadow_callback registered");
+                    }
+                } else if (!self->rules_config_topic_.empty() &&
+                           topic == self->rules_config_topic_) {
+                    // Dedicated dispatch — keeps the generic last-segment
+                    // ("config") parser in provisioning.yaml from being
+                    // ambiguous with the shadow's own "config" naming.
+                    if (self->rules_config_callback_) {
+                        self->rules_config_callback_(topic, payload);
+                    } else {
+                        ESP_LOGW("mqtt", "Rules-config message received but no callback registered");
                     }
                 } else if (self->callback_) {
                     self->callback_(topic, payload);

@@ -115,9 +115,15 @@ script:
                 }
               });
               ESP_LOGI("provisioning", "MQTT started and subscribed");
-              // Wire AWS IoT Device Shadow (named shadow "config") for offline rule sync.
-              // Mosquitto / dev profile no-ops inside the script.
+              // Wire AWS IoT Device Shadow (named shadow "config") for sleep
+              // config + rulesHash. Mosquitto / dev profile no-ops inside the
+              // script.
               id(register_shadow_callback).execute();
+              // Wire the dedicated rules-config retained topic. The backend
+              // publishes the canonical rule array here so the shadow can
+              // carry only the small rulesHash pointer — see shadow.yaml /
+              // ShadowPayloadBuilder for why decoupling matters.
+              id(register_rules_config_callback).execute();
               id(restore_rules_json_from_nvs).execute();
               // Drain any rule firings buffered while offline / asleep. The
               // script defers itself if MQTT hasn't actually finished its

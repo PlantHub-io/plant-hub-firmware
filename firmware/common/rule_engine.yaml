@@ -214,10 +214,38 @@ script:
             id(persist_rule_log_buffer).execute();
           }
 
+  # --- Register the rules-config MQTT callback ---------------------------
+  # Subscribes the planthub_mqtt layer to the retained
+  # {tenantId}/{nodeId}/rules/config topic so the backend can push rule
+  # updates out-of-band of the AWS IoT Device Shadow. The shadow only carries
+  # the rulesHash pointer now; the actual array lives on this topic. Safe to
+  # call on Mosquitto/dev profiles too — the backend's DeviceConfigShadowPublisher
+  # is gated on AWS, so nothing publishes there in dev and the subscription
+  # is harmless.
+  - id: register_rules_config_callback
+    mode: single
+    then:
+      - lambda: |-
+          planthub::planthub_mqtt.set_rules_config_callback(
+            [](const std::string &topic, const std::string &payload) {
+              ESP_LOGI("rule_engine",
+                "Rules-config message on %s (%d bytes)",
+                topic.c_str(), (int) payload.length());
+              id(apply_rules_json).execute(payload);
+            }
+          );
+          ESP_LOGI("rule_engine",
+            "Rules-config callback registered for topic %s",
+            planthub::planthub_mqtt.get_rules_config_topic().c_str());
+
   # --- Replace the rule set from an arbitrary JSON blob -------------------
-  # Called by shadow.yaml when a new shadow desired state arrives. Persists
-  # to NVS so rules survive reboots even if the shadow is unreachable next
-  # boot, then rebuilds the in-RAM vector.
+  # Called by:
+  #   * the dedicated rules-config MQTT subscriber (the canonical path now),
+  #   * shadow.yaml when a legacy shadow desired-state still carries a
+  #     `rules` array (backwards-compat during rollout — once all backends
+  #     are migrated this branch is unreachable).
+  # Persists to NVS so rules survive reboots even if the broker is unreachable
+  # next boot, then rebuilds the in-RAM vector.
   - id: apply_rules_json
     mode: single
     parameters:
